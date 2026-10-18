@@ -8,14 +8,31 @@ import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (!SupabaseConfig.isConfigured) {
+    runApp(const _MissingConfigApp());
+    return;
+  }
 
   // تهيئة Supabase
   await Supabase.initialize(
     url: SupabaseConfig.url,
     anonKey: SupabaseConfig.anonKey,
   );
+
+  // عند انتهاء الجلسة أو تسجيل الخروج → العودة لشاشة الدخول
+  Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+    if (data.event == AuthChangeEvent.signedOut) {
+      navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        '/login',
+        (route) => false,
+      );
+    }
+  });
 
   runApp(
     const ProviderScope(
@@ -30,6 +47,7 @@ class TeacherApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'تطبيق المعلمين',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
@@ -50,5 +68,36 @@ class TeacherApp extends StatelessWidget {
   }
 }
 
-/// اختصار للوصول لـ Supabase Client
-final supabase = Supabase.instance.client;
+/// تظهر عند نسيان تمرير مفاتيح Supabase بدل انهيار التطبيق.
+class _MissingConfigApp extends StatelessWidget {
+  const _MissingConfigApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      locale: Locale('ar'),
+      supportedLocales: [Locale('ar')],
+      localizationsDelegates: [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'لم يتم ضبط إعدادات Supabase.\n\n'
+              'شغّل التطبيق مع:\n'
+              '--dart-define=SUPABASE_URL=...\n'
+              '--dart-define=SUPABASE_ANON_KEY=...',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 16, height: 1.8),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/number_utils.dart';
 import '../../../../shared/models/grade_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
@@ -37,10 +39,16 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
       final grades = await _db.getGradesForAssessment(widget.assessment.id);
       for (final g in grades) {
         if (_controllers.containsKey(g.studentId) && g.rawScore != null) {
-          _controllers[g.studentId]!.text = g.rawScore.toString();
+          _controllers[g.studentId]!.text = formatNumber(g.rawScore!);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+        );
+      }
+    }
     if (mounted) setState(() => _isLoading = false);
   }
 
@@ -52,39 +60,35 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
     super.dispose();
   }
 
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
   Future<void> _save() async {
     setState(() => _isSaving = true);
 
     try {
       final grades = <({String studentId, double? rawScore})>[];
 
-      for (final entry in _controllers.entries) {
-        final text = entry.value.text.trim();
+      for (final student in widget.students) {
+        final text = _controllers[student.id]!.text.trim();
         double? score;
         if (text.isNotEmpty) {
-          score = double.tryParse(text);
+          score = parseNumber(text);
           if (score == null) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('درجة غير صالحة لأحد الطلاب'),
-                backgroundColor: Colors.red,
-              ),
-            );
-            setState(() => _isSaving = false);
+            _showError('درجة غير صالحة للطالب: ${student.fullName}');
             return;
           }
           if (score < 0 || score > widget.assessment.maxScore) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('الدرجة يجب أن تكون بين 0 و ${widget.assessment.maxScore}'),
-                backgroundColor: Colors.red,
-              ),
+            _showError(
+              'درجة ${student.fullName} يجب أن تكون بين 0 و ${formatNumber(widget.assessment.maxScore)}',
             );
-            setState(() => _isSaving = false);
             return;
           }
         }
-        grades.add((studentId: entry.key, rawScore: score));
+        grades.add((studentId: student.id, rawScore: score));
       }
 
       await _db.saveGrades(
@@ -101,7 +105,7 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -136,7 +140,7 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
                   padding: const EdgeInsets.all(12),
                   color: Theme.of(context).primaryColor.withOpacity(0.08),
                   child: Text(
-                    'الدرجة العظمى: ${widget.assessment.maxScore}  •  الوزن: ${widget.assessment.weight}%',
+                    'الدرجة العظمى: ${formatNumber(widget.assessment.maxScore)}  •  الوزن: ${formatNumber(widget.assessment.weight)}%',
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
@@ -181,7 +185,7 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
                                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                         textAlign: TextAlign.center,
                                         decoration: InputDecoration(
-                                          hintText: '0-${widget.assessment.maxScore.toInt()}',
+                                          hintText: '0-${formatNumber(widget.assessment.maxScore)}',
                                           isDense: true,
                                           contentPadding: const EdgeInsets.symmetric(
                                             horizontal: 8,

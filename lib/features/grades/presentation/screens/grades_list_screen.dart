@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
-import '../../../students/presentation/screens/class_detail_screen.dart';
+import 'assessments_screen.dart';
 
 class GradesListScreen extends StatefulWidget {
   const GradesListScreen({super.key});
@@ -25,12 +26,39 @@ class _GradesListScreenState extends State<GradesListScreen> {
     setState(() => _isLoading = true);
     try {
       final list = await _db.getClasses();
+      if (!mounted) return;
       setState(() {
         _classes = list;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// يفتح تقييمات الفصل مباشرة (بدل المرور بشاشة تفاصيل الفصل)
+  Future<void> _openGrades(ClassModel cls) async {
+    try {
+      final students = await _db.getStudentsInClass(cls.id);
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => AssessmentsScreen(
+            classModel: cls,
+            students: students,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -72,14 +100,7 @@ class _GradesListScreenState extends State<GradesListScreen> {
                       title: Text(cls.name, style: const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: Text(cls.subject ?? 'اضغط لإدارة الدرجات'),
                       trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ClassDetailScreen(classModel: cls),
-                          ),
-                        );
-                      },
+                      onTap: () => _openGrades(cls),
                     ),
                   );
                 },

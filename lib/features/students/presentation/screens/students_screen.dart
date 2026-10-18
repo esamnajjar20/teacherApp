@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
 
@@ -28,13 +29,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
     });
     try {
       final list = await _db.getStudents();
+      if (!mounted) return;
       setState(() {
         _students = list;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = friendlyError(e);
         _isLoading = false;
       });
     }
@@ -85,13 +88,17 @@ class _StudentsScreenState extends State<StudentsScreen> {
       ),
     );
 
+    final fullName = nameController.text.trim();
+    final code = codeController.text.trim();
+    final phone = phoneController.text.trim();
+
     if (result != true) return;
 
     try {
       await _db.createStudent(
-        fullName: nameController.text.trim(),
-        studentCode: codeController.text.trim().isEmpty ? null : codeController.text.trim(),
-        parentPhone: phoneController.text.trim().isEmpty ? null : phoneController.text.trim(),
+        fullName: fullName,
+        studentCode: code.isEmpty ? null : code,
+        parentPhone: phone.isEmpty ? null : phone,
       );
       _loadStudents();
       if (mounted) {
@@ -102,7 +109,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -132,7 +139,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -147,7 +154,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text('حدث خطأ: $_error'),
+            Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(onPressed: _loadStudents, child: const Text('إعادة المحاولة')),
           ],

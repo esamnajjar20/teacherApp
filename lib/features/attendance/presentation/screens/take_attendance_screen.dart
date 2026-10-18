@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_constants.dart';
+import '../../../../core/errors/error_message.dart';
+import '../../../../shared/models/attendance_model.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
@@ -21,16 +23,64 @@ class TakeAttendanceScreen extends StatefulWidget {
 class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
   final _db = DatabaseService();
   late Map<String, String> _statusMap; // studentId -> status
-  DateTime _selectedDate = DateTime.now();
+  late DateTime _selectedDate;
   bool _isSaving = false;
+  bool _isLoadingExisting = false;
 
   @override
   void initState() {
     super.initState();
-    // الافتراضي = حاضر لكل الطلاب
+    final now = DateTime.now();
+    _selectedDate = DateTime(now.year, now.month, now.day);
+    _resetToDefault();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadExisting();
+    });
+  }
+
+  /// الافتراضي = حاضر لكل الطلاب
+  void _resetToDefault() {
     _statusMap = {
       for (final s in widget.students) s.id: AppConstants.present,
     };
+  }
+
+  /// إذا كان الحضور مسجلاً مسبقاً لهذا اليوم نعرضه للتعديل
+  /// بدل البدء من الصفر (وبدل فشل الحفظ بسبب تكرار الجلسة).
+  Future<void> _loadExisting() async {
+    if (widget.students.isEmpty) return;
+    final date = _selectedDate;
+    setState(() => _isLoadingExisting = true);
+    try {
+      final session = await _db.findSession(
+        classId: widget.classModel.id,
+        date: date,
+      );
+      final records = session == null
+          ? const <AttendanceRecordModel>[]
+          : await _db.getRecordsForSession(session.id);
+
+      // المستخدم غيّر التاريخ أثناء التحميل → تجاهل النتيجة القديمة
+      if (!mounted || date != _selectedDate) return;
+
+      setState(() {
+        _resetToDefault();
+        for (final r in records) {
+          if (_statusMap.containsKey(r.studentId)) {
+            _statusMap[r.studentId] = r.status;
+          }
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted && date == _selectedDate) {
+        setState(() => _isLoadingExisting = false);
+      }
+    }
   }
 
   Color _statusColor(String status) {
@@ -78,6 +128,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
   }
 
   Future<void> _save() async {
+    if (_isLoadingExisting) return;
     if (widget.students.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('لا يوجد طلاب في الفصل')),
@@ -102,7 +153,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
     setState(() => _isSaving = true);
 
     try {
-      final session = await _db.createSession(
+      final session = await _db.getOrCreateSession(
         classId: widget.classModel.id,
         date: _selectedDate,
       );
@@ -126,7 +177,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     } finally {
@@ -143,7 +194,10 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
       locale: const Locale('ar'),
     );
     if (picked != null) {
-      setState(() => _selectedDate = picked);
+      setState(() {
+        _selectedDate = DateTime(picked.year, picked.month, picked.day);
+      });
+      _loadExisting();
     }
   }
 
@@ -163,7 +217,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
         title: const Text('تسجيل الحضور'),
         actions: [
           TextButton(
-            onPressed: _isSaving ? null : _save,
+            onPressed: (_isSaving || _isLoadingExisting) ? null : _save,
             child: _isSaving
                 ? const SizedBox(
                     width: 20,
@@ -215,6 +269,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
               ],
             ),
           ),
+          if (_isLoadingExisting) const LinearProgressIndicator(minHeight: 2),
           // قائمة الطلاب
           Expanded(
             child: widget.students.isEmpty

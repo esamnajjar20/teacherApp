@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/number_utils.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/models/grade_model.dart';
@@ -34,15 +36,17 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     setState(() => _isLoading = true);
     try {
       final list = await _db.getAssessments(widget.classModel.id);
+      if (!mounted) return;
       setState(() {
         _assessments = list;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -50,6 +54,8 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
 
   double get _totalWeight =>
       _assessments.where((a) => a.isActive).fold(0.0, (sum, a) => sum + a.weight);
+
+  bool get _isWeightComplete => (_totalWeight - 100).abs() < 0.01;
 
   Future<void> _showAddDialog() async {
     final nameCtrl = TextEditingController();
@@ -122,22 +128,33 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
       ),
     );
 
-    if (result != true) return;
+    if (result != true || !mounted) return;
 
-    final weight = double.tryParse(weightCtrl.text) ?? 0;
-    final maxScore = double.tryParse(maxCtrl.text) ?? 100;
+    final name = nameCtrl.text.trim();
+    final weight = parseNumber(weightCtrl.text);
+    final maxScore = parseNumber(maxCtrl.text);
 
-    if (weight < 0 || weight > 100) {
+    void showError(String msg) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('الوزن يجب أن يكون بين 0 و 100'), backgroundColor: Colors.red),
+        SnackBar(content: Text(msg), backgroundColor: Colors.red),
       );
+    }
+
+    if (weight == null || weight < 0 || weight > 100) {
+      showError('الوزن يجب أن يكون رقماً بين 0 و 100');
+      return;
+    }
+    if (maxScore == null || maxScore <= 0 || maxScore > 9999.99) {
+      showError('الدرجة العظمى يجب أن تكون رقماً أكبر من 0');
       return;
     }
 
     if (_totalWeight + weight > 100.01) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('مجموع الأوزان سيتجاوز 100% (الحالي: ${_totalWeight.toStringAsFixed(1)}%)'),
+          content: Text(
+            'تنبيه: مجموع الأوزان سيتجاوز 100% (الحالي: ${formatNumber(_totalWeight)}%)',
+          ),
           backgroundColor: Colors.orange,
         ),
       );
@@ -147,7 +164,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     try {
       await _db.createAssessment(
         classId: widget.classModel.id,
-        name: nameCtrl.text.trim(),
+        name: name,
         type: type,
         weight: weight,
         maxScore: maxScore,
@@ -161,7 +178,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -183,7 +200,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     try {
       await _db.softDeleteAssessment(a.id);
@@ -191,11 +208,22 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
   }
+
+  static const Map<String, String> _typeLabels = {
+    'exam': 'امتحان',
+    'homework': 'واجب',
+    'participation': 'مشاركة',
+    'project': 'مشروع',
+    'quiz': 'اختبار قصير',
+  };
+
+  String _typeLabel(String? type) =>
+      type == null ? '' : (_typeLabels[type] ?? type);
 
   @override
   Widget build(BuildContext context) {
@@ -211,22 +239,22 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(16),
-                  color: _totalWeight == 100
+                  color: _isWeightComplete
                       ? Colors.green.shade50
                       : Colors.orange.shade50,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        _totalWeight == 100 ? Icons.check_circle : Icons.warning,
-                        color: _totalWeight == 100 ? Colors.green : Colors.orange,
+                        _isWeightComplete ? Icons.check_circle : Icons.warning,
+                        color: _isWeightComplete ? Colors.green : Colors.orange,
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'مجموع الأوزان: ${_totalWeight.toStringAsFixed(1)}%',
+                        'مجموع الأوزان: ${formatNumber(double.parse(_totalWeight.toStringAsFixed(2)))}%',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: _totalWeight == 100 ? Colors.green : Colors.orange.shade800,
+                          color: _isWeightComplete ? Colors.green : Colors.orange.shade800,
                         ),
                       ),
                     ],
@@ -260,7 +288,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                                 leading: CircleAvatar(
                                   backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
                                   child: Text(
-                                    '${a.weight.toStringAsFixed(0)}%',
+                                    '${formatNumber(a.weight)}%',
                                     style: TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
@@ -269,7 +297,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                                   ),
                                 ),
                                 title: Text(a.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                subtitle: Text('من ${a.maxScore} • ${a.type ?? ""}'),
+                                subtitle: Text('من ${formatNumber(a.maxScore)} • ${_typeLabel(a.type)}'),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [

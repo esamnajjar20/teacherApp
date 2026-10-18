@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
 import 'class_detail_screen.dart';
@@ -29,13 +30,15 @@ class _ClassesScreenState extends State<ClassesScreen> {
     });
     try {
       final list = await _db.getClasses();
+      if (!mounted) return;
       setState(() {
         _classes = list;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
-        _error = e.toString();
+        _error = friendlyError(e);
         _isLoading = false;
       });
     }
@@ -44,7 +47,11 @@ class _ClassesScreenState extends State<ClassesScreen> {
   Future<void> _showAddClassDialog() async {
     final nameController = TextEditingController();
     final subjectController = TextEditingController();
-    final yearController = TextEditingController(text: '2025-2026');
+    final now = DateTime.now();
+    // العام الدراسي يبدأ تقريباً في شهر 8 (أغسطس)
+    final startYear = now.month >= 8 ? now.year : now.year - 1;
+    final yearController =
+        TextEditingController(text: '$startYear-${startYear + 1}');
 
     final result = await showDialog<bool>(
       context: context,
@@ -91,15 +98,17 @@ class _ClassesScreenState extends State<ClassesScreen> {
       ),
     );
 
+    final name = nameController.text.trim();
+    final subject = subjectController.text.trim();
+    final year = yearController.text.trim();
+
     if (result != true) return;
 
     try {
       await _db.createClass(
-        name: nameController.text.trim(),
-        subject: subjectController.text.trim().isEmpty
-            ? null
-            : subjectController.text.trim(),
-        academicYear: yearController.text.trim(),
+        name: name,
+        subject: subject.isEmpty ? null : subject,
+        academicYear: year.isEmpty ? null : year,
       );
       _loadClasses();
       if (mounted) {
@@ -110,7 +119,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -140,7 +149,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -155,7 +164,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text('حدث خطأ: $_error'),
+            Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(onPressed: _loadClasses, child: const Text('إعادة المحاولة')),
           ],

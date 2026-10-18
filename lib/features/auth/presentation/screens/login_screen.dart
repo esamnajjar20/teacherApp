@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../../main.dart';
+import '../../../../core/constants/supabase_client.dart';
+import '../../../../core/errors/error_message.dart';
 import '../../../students/presentation/screens/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -43,16 +43,9 @@ class _LoginScreenState extends State<LoginScreen> {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
-    } on AuthException catch (e) {
-      setState(() {
-        _errorMessage = e.message.contains('Invalid')
-            ? 'البريد أو كلمة المرور غير صحيحة'
-            : e.message;
-      });
     } catch (e) {
-      setState(() {
-        _errorMessage = 'حدث خطأ غير متوقع. حاول مرة أخرى.';
-      });
+      if (!mounted) return;
+      setState(() => _errorMessage = friendlyError(e));
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -69,27 +62,35 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      await supabase.auth.signUp(
-        email: _emailController.text.trim(),
+      final email = _emailController.text.trim();
+      final response = await supabase.auth.signUp(
+        email: email,
         password: _passwordController.text,
-        data: {'full_name': _emailController.text.split('@').first},
+        data: {'full_name': email.split('@').first},
       );
 
       if (!mounted) return;
+
+      if (response.session != null) {
+        // التأكيد بالبريد معطّل في Supabase → المستخدم مسجّل دخوله فعلاً
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+        return;
+      }
+
+      // التأكيد بالبريد مفعّل → لا توجد جلسة بعد
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('تم إنشاء الحساب بنجاح. يمكنك تسجيل الدخول الآن.'),
+          content: Text(
+            'تم إنشاء الحساب. تحقق من بريدك الإلكتروني لتأكيد الحساب ثم سجّل الدخول.',
+          ),
           backgroundColor: Colors.green,
         ),
       );
-    } on AuthException catch (e) {
-      setState(() {
-        _errorMessage = e.message;
-      });
     } catch (e) {
-      setState(() {
-        _errorMessage = 'حدث خطأ أثناء إنشاء الحساب.';
-      });
+      if (!mounted) return;
+      setState(() => _errorMessage = friendlyError(e));
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);

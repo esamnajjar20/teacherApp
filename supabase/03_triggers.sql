@@ -9,7 +9,7 @@ BEGIN
   NEW.updated_at = now();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql SET search_path = public;
 
 CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.profiles
 FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
@@ -39,6 +39,7 @@ CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.grade_settings
 FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
 
 -- 2. إنشاء profile تلقائياً عند تسجيل مستخدم جديد
+-- SECURITY DEFINER بدون search_path ثابت ثغرة معروفة (search_path hijacking)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -47,10 +48,11 @@ BEGIN
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
     NEW.email
-  );
+  )
+  ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users

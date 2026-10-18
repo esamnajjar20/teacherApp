@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
@@ -31,16 +32,18 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
     try {
       final enrolled = await _db.getStudentsInClass(widget.classModel.id);
       final all = await _db.getStudents();
+      if (!mounted) return;
       setState(() {
         _enrolled = enrolled;
         _allStudents = all;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -70,7 +73,7 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
       ),
     );
 
-    if (selected == null) return;
+    if (selected == null || !mounted) return;
 
     try {
       await _db.enrollStudent(
@@ -86,7 +89,7 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }
@@ -108,7 +111,7 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     try {
       await _db.unenrollStudent(
@@ -119,7 +122,7 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
     }

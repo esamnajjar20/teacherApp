@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../../../../main.dart';
-import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../../core/constants/supabase_client.dart';
+import '../../../../core/errors/error_message.dart';
 import '../../../attendance/presentation/screens/attendance_list_screen.dart';
 import '../../../grades/presentation/screens/grades_list_screen.dart';
 import '../../../reports/presentation/screens/reports_screen.dart';
@@ -25,12 +25,15 @@ class _HomeScreenState extends State<HomeScreen> {
   ];
 
   Future<void> _signOut() async {
-    await supabase.auth.signOut();
-    if (!mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (route) => false,
-    );
+    try {
+      // التنقل لشاشة الدخول يتم تلقائياً من مستمع onAuthStateChange في main.dart
+      await supabase.auth.signOut();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+      );
+    }
   }
 
   @override

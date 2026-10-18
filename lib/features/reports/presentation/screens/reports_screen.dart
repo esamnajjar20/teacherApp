@@ -1,13 +1,16 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
+
 import 'package:excel/excel.dart';
+import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'dart:io';
+
+import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/grade_calculator.dart';
+import '../../../../core/utils/number_utils.dart';
 import '../../../../shared/models/class_model.dart';
-import '../../../../shared/models/student_model.dart';
 import '../../../../shared/models/grade_model.dart';
 import '../../../../shared/services/database_service.dart';
-import '../../../../core/utils/grade_calculator.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -32,12 +35,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
   Future<void> _loadClasses() async {
     try {
       final list = await _db.getClasses();
+      if (!mounted) return;
       setState(() {
         _classes = list;
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -57,15 +65,18 @@ class _ReportsScreenState extends State<ReportsScreen> {
       final settings = await _db.getGradeSettings(_selectedClass!.id);
       final policy = settings?.missingGradePolicy ?? 'exclude';
 
-      // جلب كل الدرجات
-      final Map<String, List<GradeModel>> gradesByAssessment = {};
-      for (final a in assessments) {
-        gradesByAssessment[a.id] = await _db.getGradesForAssessment(a.id);
-      }
+      // جلب كل الدرجات بطلب واحد وتجميعها حسب (تقييم، طالب)
+      final allGrades =
+          await _db.getGradesForAssessments(assessments.map((a) => a.id).toList());
+      final gradeLookup = <String, GradeModel>{
+        for (final g in allGrades) '${g.assessmentId}|${g.studentId}': g,
+      };
 
       final excel = Excel.createExcel();
-      final sheet = excel['كشف الدرجات'];
-      excel.delete('Sheet1');
+      const sheetName = 'كشف الدرجات';
+      excel.rename(excel.getDefaultSheet() ?? 'Sheet1', sheetName);
+      final sheet = excel[sheetName];
+      sheet.isRTL = true;
 
       // العنوان
       sheet.appendRow([
@@ -80,9 +91,9 @@ class _ReportsScreenState extends State<ReportsScreen> {
       // رأس الجدول
       final header = <CellValue?>[TextCellValue('الطالب')];
       for (final a in assessments) {
-        header.add(TextCellValue('${a.name} (${a.weight}%)'));
+        header.add(TextCellValue('${a.name} (${formatNumber(a.weight)}%)'));
       }
-      header.add(TextCellValue('المعدل'));
+      header.add(TextCellValue('المعدل (%)'));
       sheet.appendRow(header);
 
       // صفوف الطلاب
@@ -91,8 +102,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         final items = <({AssessmentModel assessment, GradeModel? grade})>[];
 
         for (final a in assessments) {
-          final grades = gradesByAssessment[a.id] ?? [];
-          final g = grades.where((x) => x.studentId == student.id).firstOrNull;
+          final g = gradeLookup['${a.id}|${student.id}'];
           items.add((assessment: a, grade: g));
 
           if (g?.rawScore != null) {
@@ -114,25 +124,32 @@ class _ReportsScreenState extends State<ReportsScreen> {
       }
 
       final dir = await getTemporaryDirectory();
+      // اسم ملف آمن (بدون رموز/مسافات قد تفشل في المشاركة)
+      final safeName = _selectedClass!.name
+          .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), '_')
+          .replaceAll(RegExp(r'^_+|_+$'), '');
       final fileName =
-          'grades_${_selectedClass!.name}_${DateTime.now().millisecondsSinceEpoch}.xlsx';
-      final path = '${dir.path}/$fileName';
+          'grades_${safeName.isEmpty ? 'class' : safeName}_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final path = '${dir.path}${Platform.pathSeparator}$fileName';
       final bytes = excel.encode();
-      if (bytes != null) {
-        final file = File(path);
-        await file.writeAsBytes(bytes);
-        await Share.shareXFiles([XFile(path)], text: 'كشف درجات ${_selectedClass!.name}');
+      if (bytes == null) {
+        throw StateError('تعذّر إنشاء ملف Excel');
       }
+      await File(path).writeAsBytes(bytes);
+      await Share.shareXFiles(
+        [XFile(path)],
+        text: 'كشف درجات ${_selectedClass!.name}',
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم تصدير الملف'), backgroundColor: Colors.green),
+          const SnackBar(content: Text('تم تجهيز الملف'), backgroundColor: Colors.green),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في التصدير: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('خطأ في التصدير: ${friendlyError(e)}'), backgroundColor: Colors.red),
         );
       }
     } finally {

@@ -28,13 +28,16 @@
    - 02_indexes.sql
    - 03_triggers.sql
    - 04_rls.sql
-3. ضع رابط المشروع و anon key في:
-   `lib/core/constants/supabase_config.dart`
-4. شغّل:
+   - (إن كنت قد نفّذتها سابقاً) نفّذ `05_patch_existing_db.sql` لتطبيق إصلاحات الأمان
+3. شغّل التطبيق مع تمرير المفاتيح (لا تضعها داخل الكود):
 ```bash
 flutter pub get
-flutter run
+flutter run \
+  --dart-define=SUPABASE_URL=https://xxxx.supabase.co \
+  --dart-define=SUPABASE_ANON_KEY=eyJ...
 ```
+4. للبناء عبر GitHub Actions أضف السرّين `SUPABASE_URL` و `SUPABASE_ANON_KEY`
+   في Settings → Secrets and variables → Actions.
 
 ## هيكل المجلدات
 ```
