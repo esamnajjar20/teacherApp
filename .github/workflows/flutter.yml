@@ -63,7 +63,7 @@ jobs:
         run: |
           MANIFEST_PATH="android/app/src/main/AndroidManifest.xml"
           if ! grep -q 'android.permission.INTERNET' "$MANIFEST_PATH"; then
-            sed -i '/<manifest /i \    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST_PATH"
+            sed -i '/<manifest/a \    <uses-permission android:name="android.permission.INTERNET" />' "$MANIFEST_PATH"
             echo "INTERNET permission added."
           else
             echo "INTERNET permission already exists."
