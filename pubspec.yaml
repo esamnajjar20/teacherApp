@@ -55,9 +55,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-  fonts:
-    - family: Cairo
-      fonts:
-          weight: 700
-          weight: 600
