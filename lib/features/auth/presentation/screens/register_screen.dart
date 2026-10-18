@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/supabase_client.dart';
+import 'otp_screen.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../students/presentation/screens/home_screen.dart';
 
@@ -35,21 +36,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (!mounted) return;
 
+      if (!mounted) return;
+
       if (response.session != null) {
+        // إذا كانت الجلسة موجودة، يعني التأكيد معطّل، ندخل مباشرة
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const HomeScreen()),
           (route) => false,
         );
-        return;
+      } else {
+        // التأكيد مفعّل: ننتقل لشاشة إدخال الرمز
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => OtpScreen(email: email)),
+        );
       }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تم إنشاء الحساب. تحقق من بريدك لتأكيد الحساب.'),
-          backgroundColor: Colors.green,
-        ),
-      );
-      Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
       setState(() => _errorMessage = friendlyError(e));
