@@ -8,7 +8,7 @@ on:
   workflow_dispatch:  # تفعيل يدوي من تبويب Actions
 
 env:
-  FLUTTER_VERSION: '3.24.0'
+  FLUTTER_VERSION: '3.27.0'
 
 jobs:
   analyze-test:
