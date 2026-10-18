@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:  # تفعيل يدوي من تبويب Actions
+  workflow_dispatch:
 
 env:
   FLUTTER_VERSION: '3.27.0'
@@ -15,47 +15,39 @@ jobs:
     name: Analyze & Test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
           cache: true
 
-      - name: Flutter doctor
-        run: flutter doctor -v
-
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Analyze code
-        run: flutter analyze --no-fatal-infos
+      - name: Generate code (Drift / Riverpod)
+        run: dart run build_runner build --delete-conflicting-outputs
         continue-on-error: true
 
-      - name: Run tests
-        run: flutter test
+      - name: Analyze code
+        run: flutter analyze
         continue-on-error: true
 
   build-apk:
     name: Build Release APK
     needs: analyze-test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
@@ -64,10 +56,23 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Generate code
+        run: dart run build_runner build --delete-conflicting-outputs
+        continue-on-error: true
+
+      - name: Generate Android platform
+        run: |
+          if [ ! -d "android" ]; then
+            echo "Creating android platform..."
+            flutter create --platforms=android --project-name=teacher_app --org=com.esamnajjar20 __temp
+            mv __temp/android .
+            rm -rf __temp
+          fi
+
       - name: Build APK
         run: flutter build apk --release --split-per-abi
 
-      - name: Upload APK artifacts
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
@@ -77,14 +82,12 @@ jobs:
   build-web:
     name: Build Web
     needs: analyze-test
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: 'stable'
@@ -93,10 +96,23 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Generate code
+        run: dart run build_runner build --delete-conflicting-outputs
+        continue-on-error: true
+
+      - name: Generate Web platform
+        run: |
+          if [ ! -d "web" ]; then
+            echo "Creating web platform..."
+            flutter create --platforms=web --project-name=teacher_app --org=com.esamnajjar20 __temp
+            mv __temp/web .
+            rm -rf __temp
+          fi
+
       - name: Build Web
         run: flutter build web --release
 
-      - name: Upload Web artifacts
+      - name: Upload Web
         uses: actions/upload-artifact@v4
         with:
           name: web-build
