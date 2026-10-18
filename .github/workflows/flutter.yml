@@ -69,6 +69,13 @@ jobs:
             rm -rf __temp
           fi
 
+      - name: Force compileSdk 36
+        run: |
+          sed -i 's/compileSdk = flutter.compileSdkVersion/compileSdk = 36/g' android/app/build.gradle.kts || true
+          sed -i 's/compileSdkVersion flutter.compileSdkVersion/compileSdkVersion 36/g' android/app/build.gradle || true
+          sed -i 's/compileSdk = 35/compileSdk = 36/g' android/app/build.gradle.kts || true
+          sed -i 's/compileSdkVersion 35/compileSdkVersion 36/g' android/app/build.gradle || true
+
       - name: Build APK
         run: flutter build apk --release --split-per-abi
 
