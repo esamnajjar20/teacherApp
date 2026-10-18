@@ -7,6 +7,8 @@ import 'core/constants/supabase_config.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/splash_screen.dart';
+import 'shared/local/local_database.dart';
+import 'shared/services/sync_service.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -27,6 +29,8 @@ Future<void> main() async {
   // عند انتهاء الجلسة أو تسجيل الخروج → العودة لشاشة الدخول
   Supabase.instance.client.auth.onAuthStateChange.listen((data) {
     if (data.event == AuthChangeEvent.signedOut) {
+      SyncService.instance.stop();
+      LocalDatabase.instance.close();
       navigatorKey.currentState?.pushNamedAndRemoveUntil(
         '/login',
         (route) => false,

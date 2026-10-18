@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/supabase_client.dart';
 import '../../../../core/errors/error_message.dart';
+import '../../../../shared/services/sync_service.dart';
 import '../../../attendance/presentation/screens/attendance_list_screen.dart';
 import '../../../grades/presentation/screens/grades_list_screen.dart';
 import '../../../reports/presentation/screens/reports_screen.dart';
@@ -16,6 +17,67 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    SyncService.instance.start();
+  }
+
+  Widget _syncButton() {
+    return ValueListenableBuilder<SyncStatus>(
+      valueListenable: SyncService.instance.status,
+      builder: (context, st, _) {
+        IconData icon;
+        Color? color;
+        String tip;
+        if (st.syncing) {
+          return const Padding(
+            padding: EdgeInsets.all(14),
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+            ),
+          );
+        } else if (st.error != null) {
+          icon = Icons.cloud_off;
+          color = Colors.orangeAccent;
+          tip = 'غير متزامن: ${st.error}';
+        } else if (st.pending > 0) {
+          icon = Icons.cloud_upload_outlined;
+          tip = '${st.pending} تعديل بانتظار الرفع';
+        } else {
+          icon = Icons.cloud_done_outlined;
+          tip = 'كل البيانات متزامنة';
+        }
+        return IconButton(
+          icon: Badge(
+            isLabelVisible: st.pending > 0,
+            label: Text('${st.pending}'),
+            child: Icon(icon, color: color),
+          ),
+          tooltip: tip,
+          onPressed: () async {
+            await SyncService.instance.sync();
+            if (!mounted) return;
+            final s = SyncService.instance.status.value;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  s.error != null
+                      ? s.error!
+                      : (s.pending > 0
+                          ? '${s.pending} تعديل بانتظار الرفع'
+                          : 'تمت المزامنة'),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   final List<Widget> _screens = const [
     ClassesScreen(),
@@ -44,6 +106,7 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('تطبيق المعلمين'),
         actions: [
+          _syncButton(),
           IconButton(
             icon: const Icon(Icons.assessment_outlined),
             tooltip: 'التقارير',
@@ -82,7 +145,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: _screens[_currentIndex],
+      // عند وصول بيانات جديدة من السيرفر نعيد بناء التبويب الحالي ليقرأها
+      body: ValueListenableBuilder<int>(
+        valueListenable: SyncService.instance.dataVersion,
+        builder: (context, version, _) => KeyedSubtree(
+          key: ValueKey(version),
+          child: _screens[_currentIndex],
+        ),
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
@@ -154,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   context: context,
                   applicationName: 'تطبيق المعلمين',
                   applicationVersion: '1.0.0',
-                  applicationLegalese: 'Offline-First Teacher Management App',
+                  applicationLegalese: 'يعمل بدون إنترنت ويتزامن مع الخادم تلقائياً',
                 );
               },
             ),

@@ -1,16 +1,26 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:uuid/uuid.dart';
-import '../../core/constants/supabase_client.dart';
-import '../models/class_model.dart';
-import '../models/student_model.dart';
-import '../models/attendance_model.dart';
-import '../models/grade_model.dart';
+import 'dart:convert';
 
-/// طبقة خدمة البيانات — كل عمليات Supabase تمر من هنا
+import 'package:sqflite/sqflite.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../core/constants/supabase_client.dart';
+import '../local/local_database.dart';
+import '../models/attendance_model.dart';
+import '../models/class_model.dart';
+import '../models/grade_model.dart';
+import '../models/student_model.dart';
+import 'sync_service.dart';
+
+/// طبقة البيانات (Offline-First).
+///
+/// كل القراءة والكتابة تتم على قاعدة SQLite المحلية فقط، فتعمل بدون إنترنت.
+/// كل تعديل يُعلَّم dirty=1 ثم يرفعه [SyncService] للسيرفر عند توفر الاتصال.
 class DatabaseService {
   final _uuid = const Uuid();
 
-  /// معرّف المعلم الحالي. يرمي خطأً واضحاً بدل null!
+  Future<Database> get _db => LocalDatabase.instance.open();
+
+  /// معرّف المعلم الحالي (من الجلسة المحفوظة، يعمل بدون إنترنت)
   String get _uid {
     final id = supabase.auth.currentUser?.id;
     if (id == null) {
@@ -19,28 +29,87 @@ class DatabaseService {
     return id;
   }
 
-  /// الوقت الحالي بصيغة UTC — ضروري لأن أعمدة TIMESTAMPTZ
-  /// تفسّر النص بدون منطقة زمنية على أنه UTC (يسبب إزاحة بالساعات).
   String _nowIso() => DateTime.now().toUtc().toIso8601String();
 
-  /// تاريخ فقط بصيغة yyyy-MM-dd (بدون إزاحة زمنية)
   String _dateOnly(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-'
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
 
+  Map<String, dynamic> _dec(String table, Map<String, Object?> row) =>
+      LocalDatabase.decode(table, row);
+
+  void _changed() => SyncService.instance.notifyLocalChange();
+
+  /// إدراج صف جديد معلَّم للرفع
+  Future<void> _insert(
+    DatabaseExecutor ex,
+    String table,
+    Map<String, Object?> values,
+  ) async {
+    final now = _nowIso();
+    await ex.insert(table, {
+      ...values,
+      'created_at': now,
+      'updated_at': now,
+      'dirty': 1,
+    });
+  }
+
+  /// تحديث صفوف وتعليمها للرفع
+  Future<void> _update(
+    DatabaseExecutor ex,
+    String table,
+    Map<String, Object?> values, {
+    required String where,
+    required List<Object?> args,
+  }) async {
+    await ex.update(
+      table,
+      {...values, 'updated_at': _nowIso(), 'dirty': 1},
+      where: where,
+      whereArgs: args,
+    );
+  }
+
+  /// إدراج أو تحديث حسب المفتاح الطبيعي. لا يعلّم الصف dirty إن لم تتغير القيم
+  /// (حتى لا نكتب فوق تعديلات الأجهزة الأخرى بلا داعٍ).
+  Future<void> _upsertByKey(
+    DatabaseExecutor ex,
+    String table,
+    Map<String, Object?> key,
+    Map<String, Object?> values,
+  ) async {
+    final where = key.keys.map((k) => '$k=?').join(' AND ');
+    final existing = await ex.query(
+      table,
+      where: where,
+      whereArgs: key.values.toList(),
+      limit: 1,
+    );
+
+    if (existing.isEmpty) {
+      await _insert(ex, table, {'id': _uuid.v4(), ...key, ...values});
+      return;
+    }
+
+    final row = existing.first;
+    final changed = values.entries.any((e) => row[e.key] != e.value);
+    if (!changed) return;
+    await _update(ex, table, values, where: 'id=?', args: [row['id']]);
+  }
+
   // ==================== CLASSES ====================
 
   Future<List<ClassModel>> getClasses() async {
-    final response = await supabase
-        .from('classes')
-        .select()
-        .eq('teacher_id', _uid)
-        .isFilter('deleted_at', null)
-        .order('created_at', ascending: false);
-    return (response as List)
-        .map((e) => ClassModel.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final db = await _db;
+    final rows = await db.query(
+      'classes',
+      where: 'teacher_id=? AND deleted_at IS NULL',
+      whereArgs: [_uid],
+      orderBy: 'created_at DESC',
+    );
+    return rows.map((r) => ClassModel.fromJson(_dec('classes', r))).toList();
   }
 
   Future<ClassModel> createClass({
@@ -48,41 +117,39 @@ class DatabaseService {
     String? subject,
     String? academicYear,
   }) async {
-    final row = await supabase
-        .from('classes')
-        .insert({
-          'id': _uuid.v4(),
-          'teacher_id': _uid,
-          'name': name,
-          'subject': subject,
-          'academic_year': academicYear,
-        })
-        .select()
-        .single();
-    return ClassModel.fromJson(row);
+    final db = await _db;
+    final id = _uuid.v4();
+    await _insert(db, 'classes', {
+      'id': id,
+      'teacher_id': _uid,
+      'name': name,
+      'subject': subject,
+      'academic_year': academicYear,
+      'is_archived': 0,
+    });
+    _changed();
+    final row = (await db.query('classes', where: 'id=?', whereArgs: [id])).first;
+    return ClassModel.fromJson(_dec('classes', row));
   }
 
   Future<void> softDeleteClass(String id) async {
-    final now = _nowIso();
-    await supabase
-        .from('classes')
-        .update({'deleted_at': now, 'updated_at': now})
-        .eq('id', id)
-        .eq('teacher_id', _uid);
+    final db = await _db;
+    await _update(db, 'classes', {'deleted_at': _nowIso()},
+        where: 'id=?', args: [id]);
+    _changed();
   }
 
   // ==================== STUDENTS ====================
 
   Future<List<StudentModel>> getStudents() async {
-    final response = await supabase
-        .from('students')
-        .select()
-        .eq('teacher_id', _uid)
-        .isFilter('deleted_at', null)
-        .order('full_name');
-    return (response as List)
-        .map((e) => StudentModel.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final db = await _db;
+    final rows = await db.query(
+      'students',
+      where: 'teacher_id=? AND deleted_at IS NULL',
+      whereArgs: [_uid],
+      orderBy: 'full_name',
+    );
+    return rows.map((r) => StudentModel.fromJson(_dec('students', r))).toList();
   }
 
   Future<StudentModel> createStudent({
@@ -90,99 +157,114 @@ class DatabaseService {
     String? studentCode,
     String? parentPhone,
   }) async {
-    final row = await supabase
-        .from('students')
-        .insert({
-          'id': _uuid.v4(),
-          'teacher_id': _uid,
-          'full_name': fullName,
-          'student_code': studentCode,
-          'parent_phone': parentPhone,
-        })
-        .select()
-        .single();
-    return StudentModel.fromJson(row);
+    final db = await _db;
+    final id = _uuid.v4();
+    await _insert(db, 'students', {
+      'id': id,
+      'teacher_id': _uid,
+      'full_name': fullName,
+      'student_code': studentCode,
+      'parent_phone': parentPhone,
+    });
+    _changed();
+    final row = (await db.query('students', where: 'id=?', whereArgs: [id])).first;
+    return StudentModel.fromJson(_dec('students', row));
   }
 
   Future<void> softDeleteStudent(String id) async {
-    final now = _nowIso();
-    await supabase
-        .from('students')
-        .update({'deleted_at': now, 'updated_at': now})
-        .eq('id', id)
-        .eq('teacher_id', _uid);
+    final db = await _db;
+    await _update(db, 'students', {'deleted_at': _nowIso()},
+        where: 'id=?', args: [id]);
+    _changed();
   }
 
   // ==================== ENROLLMENTS ====================
 
   /// طلاب الفصل (النشطون وغير المحذوفين) مرتبون بالاسم
   Future<List<StudentModel>> getStudentsInClass(String classId) async {
-    final response = await supabase
-        .from('enrollments')
-        .select('student_id, students(*)')
-        .eq('class_id', classId)
-        .eq('is_active', true)
-        .isFilter('deleted_at', null);
-
-    final students = <StudentModel>[];
-    for (final e in response as List) {
-      final json = (e as Map<String, dynamic>)['students'];
-      if (json == null) continue;
-      final student = StudentModel.fromJson(json as Map<String, dynamic>);
-      if (student.isDeleted) continue; // الطالب المحذوف لا يظهر
-      students.add(student);
-    }
-    students.sort((a, b) => a.fullName.compareTo(b.fullName));
-    return students;
+    final db = await _db;
+    final rows = await db.rawQuery('''
+      SELECT s.* FROM students s
+      JOIN enrollments e ON e.student_id = s.id
+      WHERE e.class_id = ?
+        AND e.is_active = 1
+        AND e.deleted_at IS NULL
+        AND s.deleted_at IS NULL
+      ORDER BY s.full_name
+    ''', [classId]);
+    return rows.map((r) => StudentModel.fromJson(_dec('students', r))).toList();
   }
 
   /// يضيف الطالب للفصل، أو يعيد تفعيل تسجيله القديم.
-  /// (القيد UNIQUE(class_id, student_id) يمنع INSERT ثانٍ بعد الإزالة.)
   Future<void> enrollStudent({
     required String classId,
     required String studentId,
   }) async {
-    await supabase.from('enrollments').upsert(
-      {
+    final db = await _db;
+    final existing = await db.query(
+      'enrollments',
+      where: 'class_id=? AND student_id=?',
+      whereArgs: [classId, studentId],
+      limit: 1,
+    );
+
+    if (existing.isEmpty) {
+      await _insert(db, 'enrollments', {
+        'id': _uuid.v4(),
         'class_id': classId,
         'student_id': studentId,
         'enrollment_date': _dateOnly(DateTime.now()),
-        'is_active': true,
-        'left_date': null,
-        'deleted_at': null,
-        'updated_at': _nowIso(),
-      },
-      onConflict: 'class_id,student_id',
-    );
+        'is_active': 1,
+      });
+    } else {
+      final row = existing.first;
+      final alreadyActive = row['is_active'] == 1 && row['deleted_at'] == null;
+      if (alreadyActive) return;
+      await _update(
+        db,
+        'enrollments',
+        {
+          'is_active': 1,
+          'left_date': null,
+          'deleted_at': null,
+          'enrollment_date': _dateOnly(DateTime.now()),
+        },
+        where: 'id=?',
+        args: [row['id']],
+      );
+    }
+    _changed();
   }
 
   Future<void> unenrollStudent({
     required String classId,
     required String studentId,
   }) async {
-    await supabase
-        .from('enrollments')
-        .update({
-          'is_active': false,
-          'left_date': _dateOnly(DateTime.now()),
-          'updated_at': _nowIso(),
-        })
-        .eq('class_id', classId)
-        .eq('student_id', studentId);
+    final db = await _db;
+    await _update(
+      db,
+      'enrollments',
+      {'is_active': 0, 'left_date': _dateOnly(DateTime.now())},
+      where: 'class_id=? AND student_id=?',
+      args: [classId, studentId],
+    );
+    _changed();
   }
 
   // ==================== ATTENDANCE ====================
 
   Future<List<AttendanceSessionModel>> getSessionsForClass(
       String classId) async {
-    final response = await supabase
-        .from('attendance_sessions')
-        .select()
-        .eq('class_id', classId)
-        .isFilter('deleted_at', null)
-        .order('date', ascending: false);
-    return (response as List)
-        .map((e) => AttendanceSessionModel.fromJson(e as Map<String, dynamic>))
+    final db = await _db;
+    final rows = await db.query(
+      'attendance_sessions',
+      where: 'class_id=? AND deleted_at IS NULL',
+      whereArgs: [classId],
+      orderBy: 'date DESC',
+    );
+    return rows
+        .map((r) =>
+            AttendanceSessionModel.fromJson(_dec('attendance_sessions', r)))
         .toList();
   }
 
@@ -191,23 +273,21 @@ class DatabaseService {
     required DateTime date,
     String? period,
   }) async {
-    var query = supabase
-        .from('attendance_sessions')
-        .select()
-        .eq('class_id', classId)
-        .eq('date', _dateOnly(date))
-        .isFilter('deleted_at', null);
-
-    query = period == null
-        ? query.isFilter('period', null)
-        : query.eq('period', period);
-
-    final row = await query.maybeSingle();
-    return row == null ? null : AttendanceSessionModel.fromJson(row);
+    final db = await _db;
+    final rows = await db.query(
+      'attendance_sessions',
+      where:
+          'class_id=? AND date=? AND deleted_at IS NULL AND ${period == null ? 'period IS NULL' : 'period=?'}',
+      whereArgs: [classId, _dateOnly(date), if (period != null) period],
+      orderBy: 'created_at',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return AttendanceSessionModel.fromJson(
+        _dec('attendance_sessions', rows.first));
   }
 
   /// يرجع جلسة اليوم إن وُجدت وإلا ينشئها.
-  /// (الفهرس uq_daily_attendance يمنع جلستين لنفس الفصل واليوم.)
   Future<AttendanceSessionModel> getOrCreateSession({
     required String classId,
     required DateTime date,
@@ -218,39 +298,33 @@ class DatabaseService {
         await findSession(classId: classId, date: date, period: period);
     if (existing != null) return existing;
 
-    try {
-      final row = await supabase
-          .from('attendance_sessions')
-          .insert({
-            'id': _uuid.v4(),
-            'class_id': classId,
-            'date': _dateOnly(date),
-            'period': period,
-            'notes': notes,
-          })
-          .select()
-          .single();
-      return AttendanceSessionModel.fromJson(row);
-    } on PostgrestException catch (e) {
-      // سباق: جلسة أُنشئت للتو من جهاز آخر
-      if (e.code == '23505') {
-        final again =
-            await findSession(classId: classId, date: date, period: period);
-        if (again != null) return again;
-      }
-      rethrow;
-    }
+    final db = await _db;
+    final id = _uuid.v4();
+    await _insert(db, 'attendance_sessions', {
+      'id': id,
+      'class_id': classId,
+      'date': _dateOnly(date),
+      'period': period,
+      'notes': notes,
+    });
+    _changed();
+    final row = (await db
+            .query('attendance_sessions', where: 'id=?', whereArgs: [id]))
+        .first;
+    return AttendanceSessionModel.fromJson(_dec('attendance_sessions', row));
   }
 
   Future<List<AttendanceRecordModel>> getRecordsForSession(
       String sessionId) async {
-    final response = await supabase
-        .from('attendance_records')
-        .select()
-        .eq('session_id', sessionId)
-        .isFilter('deleted_at', null);
-    return (response as List)
-        .map((e) => AttendanceRecordModel.fromJson(e as Map<String, dynamic>))
+    final db = await _db;
+    final rows = await db.query(
+      'attendance_records',
+      where: 'session_id=? AND deleted_at IS NULL',
+      whereArgs: [sessionId],
+    );
+    return rows
+        .map((r) =>
+            AttendanceRecordModel.fromJson(_dec('attendance_records', r)))
         .toList();
   }
 
@@ -259,47 +333,42 @@ class DatabaseService {
     required List<({String studentId, String status})> records,
   }) async {
     if (records.isEmpty) return;
-    final now = _nowIso();
-
-    // لا نرسل id/created_at: عند التعارض يبقى السجل القديم بمعرّفه
-    // وتاريخ إنشائه، وعند الإدراج الجديد تُولّدها قاعدة البيانات.
-    final rows = records
-        .map((r) => {
-              'session_id': sessionId,
-              'student_id': r.studentId,
-              'status': r.status,
-              'deleted_at': null,
-              'updated_at': now,
-            })
-        .toList();
-
-    await supabase.from('attendance_records').upsert(
-          rows,
-          onConflict: 'session_id,student_id',
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final r in records) {
+        await _upsertByKey(
+          txn,
+          'attendance_records',
+          {'session_id': sessionId, 'student_id': r.studentId},
+          {'status': r.status, 'deleted_at': null},
         );
+      }
+    });
+    _changed();
   }
 
   Future<void> updateAttendanceRecord({
     required String recordId,
     required String status,
   }) async {
-    await supabase.from('attendance_records').update({
-      'status': status,
-      'updated_at': _nowIso(),
-    }).eq('id', recordId);
+    final db = await _db;
+    await _update(db, 'attendance_records', {'status': status},
+        where: 'id=?', args: [recordId]);
+    _changed();
   }
 
   // ==================== ASSESSMENTS & GRADES ====================
 
   Future<List<AssessmentModel>> getAssessments(String classId) async {
-    final response = await supabase
-        .from('assessments')
-        .select()
-        .eq('class_id', classId)
-        .isFilter('deleted_at', null)
-        .order('created_at');
-    return (response as List)
-        .map((e) => AssessmentModel.fromJson(e as Map<String, dynamic>))
+    final db = await _db;
+    final rows = await db.query(
+      'assessments',
+      where: 'class_id=? AND deleted_at IS NULL',
+      whereArgs: [classId],
+      orderBy: 'created_at',
+    );
+    return rows
+        .map((r) => AssessmentModel.fromJson(_dec('assessments', r)))
         .toList();
   }
 
@@ -311,53 +380,46 @@ class DatabaseService {
     required double maxScore,
     DateTime? date,
   }) async {
-    final row = await supabase
-        .from('assessments')
-        .insert({
-          'id': _uuid.v4(),
-          'class_id': classId,
-          'name': name,
-          'type': type,
-          'weight': weight,
-          'max_score': maxScore,
-          'date': date == null ? null : _dateOnly(date),
-          'is_active': true,
-        })
-        .select()
-        .single();
-    return AssessmentModel.fromJson(row);
+    final db = await _db;
+    final id = _uuid.v4();
+    await _insert(db, 'assessments', {
+      'id': id,
+      'class_id': classId,
+      'name': name,
+      'type': type,
+      'weight': weight,
+      'max_score': maxScore,
+      'date': date == null ? null : _dateOnly(date),
+      'is_active': 1,
+    });
+    _changed();
+    final row =
+        (await db.query('assessments', where: 'id=?', whereArgs: [id])).first;
+    return AssessmentModel.fromJson(_dec('assessments', row));
   }
 
   Future<void> softDeleteAssessment(String id) async {
-    final now = _nowIso();
-    await supabase
-        .from('assessments')
-        .update({'deleted_at': now, 'updated_at': now}).eq('id', id);
+    final db = await _db;
+    await _update(db, 'assessments', {'deleted_at': _nowIso()},
+        where: 'id=?', args: [id]);
+    _changed();
   }
 
   Future<List<GradeModel>> getGradesForAssessment(String assessmentId) async {
-    final response = await supabase
-        .from('grades')
-        .select()
-        .eq('assessment_id', assessmentId)
-        .isFilter('deleted_at', null);
-    return (response as List)
-        .map((e) => GradeModel.fromJson(e as Map<String, dynamic>))
-        .toList();
+    return getGradesForAssessments([assessmentId]);
   }
 
-  /// درجات عدة تقييمات بطلب واحد (بدل طلب لكل تقييم)
   Future<List<GradeModel>> getGradesForAssessments(
       List<String> assessmentIds) async {
     if (assessmentIds.isEmpty) return [];
-    final response = await supabase
-        .from('grades')
-        .select()
-        .inFilter('assessment_id', assessmentIds)
-        .isFilter('deleted_at', null);
-    return (response as List)
-        .map((e) => GradeModel.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final db = await _db;
+    final marks = List.filled(assessmentIds.length, '?').join(',');
+    final rows = await db.query(
+      'grades',
+      where: 'assessment_id IN ($marks) AND deleted_at IS NULL',
+      whereArgs: assessmentIds,
+    );
+    return rows.map((r) => GradeModel.fromJson(_dec('grades', r))).toList();
   }
 
   Future<void> saveGrades({
@@ -365,32 +427,30 @@ class DatabaseService {
     required List<({String studentId, double? rawScore})> grades,
   }) async {
     if (grades.isEmpty) return;
-    final now = _nowIso();
-
-    final rows = grades
-        .map((g) => {
-              'assessment_id': assessmentId,
-              'student_id': g.studentId,
-              'raw_score': g.rawScore,
-              'deleted_at': null,
-              'updated_at': now,
-            })
-        .toList();
-
-    await supabase.from('grades').upsert(
-          rows,
-          onConflict: 'assessment_id,student_id',
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final g in grades) {
+        await _upsertByKey(
+          txn,
+          'grades',
+          {'assessment_id': assessmentId, 'student_id': g.studentId},
+          {'raw_score': g.rawScore, 'deleted_at': null},
         );
+      }
+    });
+    _changed();
   }
 
   Future<GradeSettingsModel?> getGradeSettings(String classId) async {
-    final response = await supabase
-        .from('grade_settings')
-        .select()
-        .eq('class_id', classId)
-        .maybeSingle();
-    if (response == null) return null;
-    return GradeSettingsModel.fromJson(response);
+    final db = await _db;
+    final rows = await db.query(
+      'grade_settings',
+      where: 'class_id=?',
+      whereArgs: [classId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return GradeSettingsModel.fromJson(_dec('grade_settings', rows.first));
   }
 
   Future<void> saveGradeSettings({
@@ -398,14 +458,16 @@ class DatabaseService {
     required List<Map<String, dynamic>> gradingScale,
     required String missingGradePolicy,
   }) async {
-    await supabase.from('grade_settings').upsert(
+    final db = await _db;
+    await _upsertByKey(
+      db,
+      'grade_settings',
+      {'class_id': classId},
       {
-        'class_id': classId,
-        'grading_scale': gradingScale,
+        'grading_scale': jsonEncode(gradingScale),
         'missing_grade_policy': missingGradePolicy,
-        'updated_at': _nowIso(),
       },
-      onConflict: 'class_id',
     );
+    _changed();
   }
 }
