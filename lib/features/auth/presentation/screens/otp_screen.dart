@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/supabase_client.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../students/presentation/screens/home_screen.dart';
