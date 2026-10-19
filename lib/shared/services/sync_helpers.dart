@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -46,12 +47,29 @@ Duration retryDelay(int attempts) {
 /// لا نعتمد على "الصفحة أقل من حجم الطلب" لأن السيرفر قد يقتطع النتيجة عند
 /// Max Rows أصغر من حجم الصفحة، وعندها كان السحب يتوقف بصمت وتضيع الصفوف.
 /// يرجع مجموع الصفوف المسحوبة.
+/// يغلّف أي عملية بـ timeout افتراضي 20 ثانية.
+Future<T> withTimeout<T>(
+  Future<T> Function() body, [
+  Duration duration = const Duration(seconds: 20),
+]) {
+  return body().timeout(
+    duration,
+    onTimeout: () => throw TimeoutException('انتهت مهلة الاتصال بالخادم'),
+  );
+}
+
 Future<int> fetchAllPages<T>({
   required Future<List<T>> Function(int offset) fetch,
   required Future<void> Function(List<T> page) onPage,
+  int maxPages = 100,
 }) async {
   var offset = 0;
+  var pages = 0;
   while (true) {
+    if (pages++ >= maxPages) {
+      debugPrint('fetchAllPages: stopped at maxPages=$maxPages, offset=$offset');
+      break;
+    }
     final page = await fetch(offset);
     if (page.isEmpty) break;
     await onPage(page);

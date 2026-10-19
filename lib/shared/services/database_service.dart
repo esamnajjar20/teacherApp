@@ -217,6 +217,18 @@ class DatabaseService {
     return rows.map((r) => StudentModel.fromJson(_dec('students', r))).toList();
   }
 
+  Future<StudentModel?> getStudentById(String id) async {
+    final db = await _db;
+    final rows = await db.query(
+      'students',
+      where: 'id=? AND deleted_at IS NULL',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return StudentModel.fromJson(_dec('students', rows.first));
+  }
+
   /// هل رقم الطالب مستخدم لطالب آخر (غير محذوف) عند نفس المعلم؟
   Future<bool> studentCodeExists(String code, {String? excludeId}) async {
     final db = await _db;
@@ -241,13 +253,20 @@ class DatabaseService {
     }
     final db = await _db;
     final id = _uuid.v4();
-    await _insert(db, 'students', {
-      'id': id,
-      'teacher_id': _uid,
-      'full_name': fullName,
-      'student_code': studentCode,
-      'parent_phone': parentPhone,
-    });
+    try {
+      await _insert(db, 'students', {
+        'id': id,
+        'teacher_id': _uid,
+        'full_name': fullName,
+        'student_code': studentCode,
+        'parent_phone': parentPhone,
+      });
+    } on DatabaseException catch (e) {
+      if (e.isUniqueConstraintError()) {
+        throw StateError('رقم الطالب "$studentCode" مستخدم لطالب آخر');
+      }
+      rethrow;
+    }
     _changed();
     final row = (await db.query('students', where: 'id=?', whereArgs: [id])).first;
     return StudentModel.fromJson(_dec('students', row));
@@ -264,17 +283,24 @@ class DatabaseService {
       throw StateError('رقم الطالب "$studentCode" مستخدم لطالب آخر');
     }
     final db = await _db;
-    await _update(
-      db,
-      'students',
-      {
-        'full_name': fullName,
-        'student_code': studentCode,
-        'parent_phone': parentPhone,
-      },
-      where: 'id=?',
-      args: [id],
-    );
+    try {
+      await _update(
+        db,
+        'students',
+        {
+          'full_name': fullName,
+          'student_code': studentCode,
+          'parent_phone': parentPhone,
+        },
+        where: 'id=?',
+        args: [id],
+      );
+    } on DatabaseException catch (e) {
+      if (e.isUniqueConstraintError()) {
+        throw StateError('رقم الطالب "$studentCode" مستخدم لطالب آخر');
+      }
+      rethrow;
+    }
     _changed();
   }
 
@@ -331,10 +357,12 @@ class DatabaseService {
     final rows = await db.rawQuery('''
       SELECT s.* FROM students s
       JOIN enrollments e ON e.student_id = s.id
+      JOIN classes c ON c.id = e.class_id
       WHERE e.class_id = ?
         AND e.is_active = 1
         AND e.deleted_at IS NULL
         AND s.deleted_at IS NULL
+        AND c.deleted_at IS NULL
       ORDER BY s.full_name
     ''', [classId]);
     return rows.map((r) => StudentModel.fromJson(_dec('students', r))).toList();

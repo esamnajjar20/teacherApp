@@ -172,8 +172,9 @@ class LocalDatabase {
       final dir = await getDatabasesPath();
       return openDatabase(
         p.join(dir, 'teacher_$uid.db'),
-        version: 1,
+        version: 2,
         onCreate: createSchema,
+        onUpgrade: _upgrade,
       );
     }();
     return _future!;
@@ -237,6 +238,48 @@ class LocalDatabase {
         'CREATE INDEX idx_grades_assess ON grades(assessment_id)');
     await db.execute(
         'CREATE TABLE sync_meta (key TEXT PRIMARY KEY, value TEXT)');
+    await db.execute(
+        'CREATE TABLE IF NOT EXISTS sync_failures ('
+        'key TEXT PRIMARY KEY, '
+        'table_name TEXT NOT NULL, '
+        'row_id TEXT NOT NULL, '
+        'label TEXT NOT NULL, '
+        'message TEXT NOT NULL, '
+        'attempts INTEGER NOT NULL, '
+        'updated_at TEXT, '
+        'next_attempt TEXT NOT NULL)');
+    try {
+      await db.execute(
+          'CREATE UNIQUE INDEX IF NOT EXISTS uq_students_teacher_code '
+          'ON students(teacher_id, student_code) '
+          'WHERE student_code IS NOT NULL AND deleted_at IS NULL');
+    } catch (e) {
+      debugPrint('Could not create unique index on student_code: $e');
+    }
+  }
+
+  static Future<void> _upgrade(
+      Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute(
+          'CREATE TABLE IF NOT EXISTS sync_failures ('
+          'key TEXT PRIMARY KEY, '
+          'table_name TEXT NOT NULL, '
+          'row_id TEXT NOT NULL, '
+          'label TEXT NOT NULL, '
+          'message TEXT NOT NULL, '
+          'attempts INTEGER NOT NULL, '
+          'updated_at TEXT, '
+          'next_attempt TEXT NOT NULL)');
+      try {
+        await db.execute(
+            'CREATE UNIQUE INDEX IF NOT EXISTS uq_students_teacher_code '
+            'ON students(teacher_id, student_code) '
+            'WHERE student_code IS NOT NULL AND deleted_at IS NULL');
+      } catch (e) {
+        debugPrint('Could not create unique index on student_code: $e');
+      }
+    }
   }
 
   Future<String?> getMeta(String key) async {

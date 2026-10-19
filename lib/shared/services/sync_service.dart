@@ -84,12 +84,73 @@ class SyncService {
   void start() {
     if (_started) return;
     _started = true;
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    _failures.clear();
+    await _loadFailures();
     _periodic = Timer.periodic(const Duration(seconds: 45), (_) => sync());
     _connSub = Connectivity().onConnectivityChanged.listen((results) {
       if (!results.contains(ConnectivityResult.none)) sync();
     });
-    _refreshPending();
-    sync();
+    await _refreshPending();
+    await sync();
+  }
+
+  Future<void> _loadFailures() async {
+    try {
+      final db = await LocalDatabase.instance.open();
+      final rows = await db.query('sync_failures');
+      for (final r in rows) {
+        final key = r['key'] as String;
+        _failures[key] = SyncFailure(
+          table: r['table_name'] as String,
+          rowId: r['row_id'] as String,
+          label: r['label'] as String,
+          message: r['message'] as String,
+          attempts: r['attempts'] as int,
+          updatedAt: r['updated_at'] as String?,
+          nextAttempt: DateTime.parse(r['next_attempt'] as String),
+        );
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveFailure(String key, SyncFailure f) async {
+    try {
+      final db = await LocalDatabase.instance.open();
+      await db.insert(
+        'sync_failures',
+        {
+          'key': key,
+          'table_name': f.table,
+          'row_id': f.rowId,
+          'label': f.label,
+          'message': f.message,
+          'attempts': f.attempts,
+          'updated_at': f.updatedAt,
+          'next_attempt': f.nextAttempt.toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _removeFailure(String key) async {
+    _failures.remove(key);
+    try {
+      final db = await LocalDatabase.instance.open();
+      await db.delete('sync_failures', where: 'key=?', whereArgs: [key]);
+    } catch (_) {}
+  }
+
+  Future<void> _clearAllFailures() async {
+    _failures.clear();
+    try {
+      final db = await LocalDatabase.instance.open();
+      await db.delete('sync_failures');
+    } catch (_) {}
   }
 
   Future<void> stop() async {
@@ -100,7 +161,7 @@ class SyncService {
     _periodic = null;
     _debounce = null;
     _connSub = null;
-    _failures.clear();
+    // لا نمسح _failures — محفوظة في SQLite، وتُعاد عند تسجيل الدخول التالي
     status.value = const SyncStatus();
   }
 
@@ -133,7 +194,7 @@ class SyncService {
   /// [force] = true (زر المزامنة اليدوي) يتجاوز فترة الانتظار للسجلات الفاشلة.
   Future<void> sync({bool force = false}) async {
     if (supabase.auth.currentSession == null) return;
-    if (force) _failures.clear();
+    if (force) await _clearAllFailures();
     if (_running) {
       _again = true;
       return;
@@ -216,7 +277,13 @@ class SyncService {
 
     // نحذف من قائمة الفشل ما لم يعد ينتظر الرفع (تمت تسويته أو حُذف)
     final dirtyKeys = all.map((r) => _key(t, r)).toSet();
-    _failures.removeWhere((k, v) => v.table == t.name && !dirtyKeys.contains(k));
+    final toRemove = _failures.entries
+        .where((e) => e.value.table == t.name && !dirtyKeys.contains(e.key))
+        .map((e) => e.key)
+        .toList();
+    for (final key in toRemove) {
+      await _removeFailure(key);
+    }
 
     // نستبعد السجلات التي ما زالت في فترة الانتظار بعد فشل سابق
     final dirty = <Map<String, Object?>>[];
@@ -225,7 +292,7 @@ class SyncService {
       final st = _failures[key];
       if (st != null) {
         if (st.updatedAt != row['updated_at']) {
-          _failures.remove(key); // عُدّل بعد الفشل: نعيد المحاولة فوراً
+          await _removeFailure(key); // عُدّل بعد الفشل: نعيد المحاولة فوراً
         } else if (now.isBefore(st.nextAttempt)) {
           failed++;
           continue;
@@ -271,7 +338,7 @@ class SyncService {
       TableDef t, Map<String, Object?> row, Object e) async {
     final key = _key(t, row);
     final attempts = (_failures[key]?.attempts ?? 0) + 1;
-    _failures[key] = SyncFailure(
+    final failure = SyncFailure(
       table: t.name,
       rowId: '${row['id']}',
       label: await _describe(t, row),
@@ -280,6 +347,8 @@ class SyncService {
       updatedAt: row['updated_at'] as String?,
       nextAttempt: DateTime.now().add(retryDelay(attempts)),
     );
+    _failures[key] = failure;
+    await _saveFailure(key, failure);
   }
 
   Future<String> _studentName(Object? studentId) async {
@@ -319,10 +388,18 @@ class SyncService {
 
   Future<void> _pushRows(TableDef t, List<Map<String, Object?>> rows) async {
     final payload = rows.map((r) => SyncCodec.toServer(t, r)).toList();
-    final res = await supabase
+    final res = await withTimeout(() async => await supabase
         .from(t.name)
         .upsert(payload, onConflict: t.onConflict)
-        .select();
+        .select());
+
+    if (res.isEmpty && rows.isNotEmpty) {
+      for (final r in rows) {
+        await _recordFailure(t, r,
+            StateError('السيرفر رفض السجل بدون سبب واضح (قد تكون مشكلة صلاحيات)'));
+      }
+      return;
+    }
 
     final byId = <String, Map<String, dynamic>>{
       for (final s in res) s['id'] as String: s,
@@ -343,7 +420,7 @@ class SyncService {
       }
     });
     for (final r in rows) {
-      _failures.remove(_key(t, r));
+      await _removeFailure(_key(t, r));
     }
   }
 
@@ -358,7 +435,7 @@ class SyncService {
     q = row['period'] == null
         ? q.isFilter('period', null)
         : q.eq('period', row['period'] as String);
-    final server = await q.maybeSingle();
+    final server = await withTimeout(() async => await q.maybeSingle());
     if (server == null) throw StateError('session conflict not found');
 
     final db = await LocalDatabase.instance.open();
@@ -401,10 +478,10 @@ class SyncService {
         var q = supabase.from(t.name).select();
         final sinceTs = since;
         if (sinceTs != null) q = q.gt('updated_at', sinceTs);
-        return await q
+        return await withTimeout(() async => await q
             .order('updated_at', ascending: true)
             .order('id', ascending: true)
-            .range(offset, offset + _pageSize - 1);
+            .range(offset, offset + _pageSize - 1));
       },
       onPage: (rows) async {
         for (final r in rows) {
