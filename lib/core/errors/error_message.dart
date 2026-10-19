@@ -10,6 +10,11 @@ String friendlyError(Object error) {
     if (m.contains('Email not confirmed')) {
       return 'يرجى تأكيد بريدك الإلكتروني أولاً';
     }
+    if (error.statusCode == '429' ||
+        m.toLowerCase().contains('rate limit') ||
+        m.contains('you can only request this after')) {
+      return 'انتظر قليلاً قبل طلب رمز جديد';
+    }
     if (m.contains('already registered')) {
       return 'هذا البريد مسجّل مسبقاً';
     }

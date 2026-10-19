@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/supabase_client.dart';
-import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/auth_actions.dart';
 import '../../../../shared/services/sync_service.dart';
 import '../../../attendance/presentation/screens/attendance_list_screen.dart';
+import '../../../auth/presentation/screens/profile_screen.dart';
 import '../../../grades/presentation/screens/grades_list_screen.dart';
 import '../../../reports/presentation/screens/reports_screen.dart';
+import '../../../trash/presentation/screens/trash_screen.dart';
 import 'classes_screen.dart';
 import 'students_screen.dart';
 
@@ -59,7 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           tooltip: tip,
           onPressed: () async {
-            await SyncService.instance.sync();
+            await SyncService.instance.sync(force: true);
             if (!mounted) return;
             final s = SyncService.instance.status.value;
             ScaffoldMessenger.of(context).showSnackBar(
@@ -86,25 +90,11 @@ class _HomeScreenState extends State<HomeScreen> {
     GradesListScreen(),
   ];
 
-  Future<void> _signOut() async {
-    try {
-      // التنقل لشاشة الدخول يتم تلقائياً من مستمع onAuthStateChange في main.dart
-      await supabase.auth.signOut();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
-      );
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final user = supabase.auth.currentUser;
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('تطبيق المعلمين'),
+        title: const Text(AppConstants.appName),
         actions: [
           _syncButton(),
           IconButton(
@@ -117,42 +107,11 @@ class _HomeScreenState extends State<HomeScreen> {
               );
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'تسجيل الخروج',
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('تسجيل الخروج'),
-                  content: const Text('هل أنت متأكد من تسجيل الخروج؟'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('إلغاء'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        _signOut();
-                      },
-                      child: const Text('خروج'),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
         ],
       ),
-      // عند وصول بيانات جديدة من السيرفر نعيد بناء التبويب الحالي ليقرأها
-      body: ValueListenableBuilder<int>(
-        valueListenable: SyncService.instance.dataVersion,
-        builder: (context, version, _) => KeyedSubtree(
-          key: ValueKey(version),
-          child: _screens[_currentIndex],
-        ),
-      ),
+      // كل تبويب يحدّث بياناته بصمت عند وصول تغييرات من السيرفر
+      // (SyncRefreshMixin)، فلا يضيع نص البحث ولا موضع التمرير.
+      body: _screens[_currentIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
@@ -185,33 +144,51 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            UserAccountsDrawerHeader(
-              accountName: Text(
-                user?.userMetadata?['full_name']?.toString() ?? 'معلم',
-              ),
-              accountEmail: Text(user?.email ?? ''),
-              currentAccountPicture: CircleAvatar(
-                backgroundColor: Colors.white,
-                child: Text(
-                  (user?.email?.isNotEmpty == true)
-                      ? user!.email![0].toUpperCase()
-                      : 'م',
-                  style: TextStyle(
-                    fontSize: 28,
-                    color: Theme.of(context).primaryColor,
+            StreamBuilder<AuthState>(
+              stream: supabase.auth.onAuthStateChange,
+              builder: (context, _) {
+                final user = supabase.auth.currentUser;
+                return UserAccountsDrawerHeader(
+                  accountName: Text(
+                    user?.userMetadata?['full_name']?.toString() ?? 'معلم',
                   ),
-                ),
-              ),
-              decoration: BoxDecoration(color: Theme.of(context).primaryColor),
+                  accountEmail: Text(user?.email ?? ''),
+                  currentAccountPicture: CircleAvatar(
+                    backgroundColor: Colors.white,
+                    child: Text(
+                      (user?.email?.isNotEmpty == true)
+                          ? user!.email![0].toUpperCase()
+                          : 'م',
+                      style: TextStyle(
+                        fontSize: 28,
+                        color: Theme.of(context).primaryColor,
+                      ),
+                    ),
+                  ),
+                  decoration:
+                      BoxDecoration(color: Theme.of(context).primaryColor),
+                );
+              },
             ),
             ListTile(
-              leading: const Icon(Icons.assessment_outlined),
-              title: const Text('التقارير والتصدير'),
+              leading: const Icon(Icons.person_outline),
+              title: const Text('حسابي'),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const ReportsScreen()),
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('سلة المحذوفات'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const TrashScreen()),
                 );
               },
             ),
@@ -222,8 +199,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 Navigator.pop(context);
                 showAboutDialog(
                   context: context,
-                  applicationName: 'تطبيق المعلمين',
-                  applicationVersion: '1.0.0',
+                  applicationName: AppConstants.appName,
+                  applicationVersion: AppConstants.appVersion,
                   applicationLegalese: 'يعمل بدون إنترنت ويتزامن مع الخادم تلقائياً',
                 );
               },
@@ -234,7 +211,7 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('تسجيل الخروج', style: TextStyle(color: Colors.red)),
               onTap: () {
                 Navigator.pop(context);
-                _signOut();
+                confirmAndSignOut(context);
               },
             ),
           ],

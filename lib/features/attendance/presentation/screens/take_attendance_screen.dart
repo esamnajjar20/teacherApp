@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:teacher_app/core/utils/color_utils.dart';
+
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/attendance_model.dart';
@@ -10,10 +12,14 @@ class TakeAttendanceScreen extends StatefulWidget {
   final ClassModel classModel;
   final List<StudentModel> students;
 
+  /// تاريخ الجلسة عند فتح الشاشة (لتعديل جلسة سابقة). الافتراضي: اليوم.
+  final DateTime? initialDate;
+
   const TakeAttendanceScreen({
     super.key,
     required this.classModel,
     required this.students,
+    this.initialDate,
   });
 
   @override
@@ -27,11 +33,14 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
   bool _isSaving = false;
   bool _isLoadingExisting = false;
 
+  /// هل هناك تعديلات لم تُحفظ بعد؟
+  bool _dirty = false;
+
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _selectedDate = DateTime(now.year, now.month, now.day);
+    final base = widget.initialDate ?? DateTime.now();
+    _selectedDate = DateTime(base.year, base.month, base.day);
     _resetToDefault();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _loadExisting();
@@ -70,6 +79,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
             _statusMap[r.studentId] = r.status;
           }
         }
+        _dirty = false;
       });
     } catch (e) {
       if (!mounted) return;
@@ -113,18 +123,80 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
     }
   }
 
+  static const _order = [
+    AppConstants.present,
+    AppConstants.absent,
+    AppConstants.late,
+    AppConstants.excused,
+  ];
+
   void _cycleStatus(String studentId) {
     final current = _statusMap[studentId] ?? AppConstants.present;
-    final order = [
-      AppConstants.present,
-      AppConstants.absent,
-      AppConstants.late,
-      AppConstants.excused,
-    ];
-    final nextIndex = (order.indexOf(current) + 1) % order.length;
+    final nextIndex = (_order.indexOf(current) + 1) % _order.length;
     setState(() {
-      _statusMap[studentId] = order[nextIndex];
+      _statusMap[studentId] = _order[nextIndex];
+      _dirty = true;
     });
+  }
+
+  /// اختيار حالة محددة بالضغط المطوّل
+  Future<void> _pickStatus(StudentModel student) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(student.fullName,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            for (final st in _order)
+              ListTile(
+                leading: Icon(_statusIcon(st), color: _statusColor(st)),
+                title: Text(AppConstants.attendanceStatusLabels[st] ?? st),
+                onTap: () => Navigator.pop(ctx, st),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _statusMap[student.id] = picked;
+      _dirty = true;
+    });
+  }
+
+  void _setAll(String status) {
+    setState(() {
+      for (final id in _statusMap.keys.toList()) {
+        _statusMap[id] = status;
+      }
+      _dirty = true;
+    });
+  }
+
+  Future<bool> _confirmDiscard() async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديلات غير محفوظة'),
+        content: const Text('لم تحفظ الحضور بعد. هل تريد الخروج وتجاهل التعديلات؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('البقاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('خروج دون حفظ', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    return leave == true;
   }
 
   Future<void> _save() async {
@@ -166,13 +238,14 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
       );
 
       if (mounted) {
+        _dirty = false;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('تم حفظ الحضور بنجاح'),
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.pop(context);
+        Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
@@ -193,12 +266,14 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
       lastDate: DateTime.now(),
       locale: const Locale('ar'),
     );
-    if (picked != null) {
-      setState(() {
-        _selectedDate = DateTime(picked.year, picked.month, picked.day);
-      });
-      _loadExisting();
-    }
+    if (picked == null) return;
+    if (_dirty && !await _confirmDiscard()) return;
+    if (!mounted) return;
+    setState(() {
+      _selectedDate = DateTime(picked.year, picked.month, picked.day);
+      _dirty = false;
+    });
+    _loadExisting();
   }
 
   @override
@@ -212,110 +287,144 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
     final excusedCount =
         _statusMap.values.where((s) => s == AppConstants.excused).length;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('تسجيل الحضور'),
-        actions: [
-          TextButton(
-            onPressed: (_isSaving || _isLoadingExisting) ? null : _save,
-            child: _isSaving
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                  )
-                : const Text('حفظ', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // شريط التاريخ + الملخص
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: Theme.of(context).primaryColor.withOpacity(0.08),
-            child: Column(
-              children: [
-                InkWell(
-                  onTap: _pickDate,
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.calendar_today, size: 18),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${_selectedDate.year}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.day.toString().padLeft(2, '0')}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      const Icon(Icons.edit, size: 16),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _SummaryChip(label: 'حاضر', count: presentCount, color: Colors.green),
-                    _SummaryChip(label: 'غائب', count: absentCount, color: Colors.red),
-                    _SummaryChip(label: 'متأخر', count: lateCount, color: Colors.orange),
-                    _SummaryChip(label: 'بعذر', count: excusedCount, color: Colors.blue),
-                  ],
-                ),
-              ],
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (await _confirmDiscard() && mounted) {
+          setState(() => _dirty = false);
+          Navigator.pop(context);
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('تسجيل الحضور'),
+          actions: [
+            TextButton(
+              onPressed: (_isSaving || _isLoadingExisting) ? null : _save,
+              child: _isSaving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('حفظ', style: TextStyle(color: Colors.white)),
             ),
-          ),
-          if (_isLoadingExisting) const LinearProgressIndicator(minHeight: 2),
-          // قائمة الطلاب
-          Expanded(
-            child: widget.students.isEmpty
-                ? const Center(child: Text('لا يوجد طلاب في الفصل'))
-                : ListView.builder(
-                    itemCount: widget.students.length,
-                    itemBuilder: (context, index) {
-                      final student = widget.students[index];
-                      final status = _statusMap[student.id] ?? AppConstants.present;
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: _statusColor(status).withOpacity(0.15),
-                          child: Icon(
-                            _statusIcon(status),
-                            color: _statusColor(status),
+          ],
+        ),
+        body: Column(
+          children: [
+            // شريط التاريخ + الملخص
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              color: Theme.of(context).primaryColor.soft(0.08),
+              child: Column(
+                children: [
+                  InkWell(
+                    onTap: _pickDate,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.calendar_today, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          '${_selectedDate.year}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.day.toString().padLeft(2, '0')}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
                         ),
-                        title: Text(
-                          student.fullName,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          AppConstants.attendanceStatusLabels[status] ?? status,
-                          style: TextStyle(color: _statusColor(status)),
-                        ),
-                        trailing: Icon(
-                          Icons.touch_app,
-                          color: Colors.grey[400],
-                        ),
-                        onTap: () => _cycleStatus(student.id),
-                      );
-                    },
+                        const SizedBox(width: 4),
+                        const Icon(Icons.edit, size: 16),
+                      ],
+                    ),
                   ),
-          ),
-          // تلميح
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: Colors.grey[100],
-            child: Text(
-              'اضغط على الطالب لتغيير الحالة (حاضر → غائب → متأخر → بعذر)',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _SummaryChip(label: 'حاضر', count: presentCount, color: Colors.green),
+                      _SummaryChip(label: 'غائب', count: absentCount, color: Colors.red),
+                      _SummaryChip(label: 'متأخر', count: lateCount, color: Colors.orange),
+                      _SummaryChip(label: 'بعذر', count: excusedCount, color: Colors.blue),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      TextButton.icon(
+                        onPressed: widget.students.isEmpty
+                            ? null
+                            : () => _setAll(AppConstants.present),
+                        icon: const Icon(Icons.check_circle_outline,
+                            color: Colors.green, size: 18),
+                        label: const Text('الكل حاضر'),
+                      ),
+                      const SizedBox(width: 8),
+                      TextButton.icon(
+                        onPressed: widget.students.isEmpty
+                            ? null
+                            : () => _setAll(AppConstants.absent),
+                        icon: const Icon(Icons.cancel_outlined,
+                            color: Colors.red, size: 18),
+                        label: const Text('الكل غائب'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+            if (_isLoadingExisting) const LinearProgressIndicator(minHeight: 2),
+            // قائمة الطلاب
+            Expanded(
+              child: widget.students.isEmpty
+                  ? const Center(child: Text('لا يوجد طلاب في الفصل'))
+                  : ListView.builder(
+                      itemCount: widget.students.length,
+                      itemBuilder: (context, index) {
+                        final student = widget.students[index];
+                        final status = _statusMap[student.id] ?? AppConstants.present;
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: _statusColor(status).soft(0.15),
+                            child: Icon(
+                              _statusIcon(status),
+                              color: _statusColor(status),
+                            ),
+                          ),
+                          title: Text(
+                            student.fullName,
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(
+                            AppConstants.attendanceStatusLabels[status] ?? status,
+                            style: TextStyle(color: _statusColor(status)),
+                          ),
+                          trailing: Icon(
+                            Icons.touch_app,
+                            color: Colors.grey[400],
+                          ),
+                          onTap: () => _cycleStatus(student.id),
+                          onLongPress: () => _pickStatus(student),
+                        );
+                      },
+                    ),
+            ),
+            // تلميح
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              color: Colors.grey[100],
+              child: Text(
+                'اضغط لتغيير الحالة (حاضر ← غائب ← متأخر ← بعذر)، أو اضغط مطوّلاً لاختيارها مباشرة',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

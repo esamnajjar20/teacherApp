@@ -1,16 +1,14 @@
-import 'dart:io';
-
 import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/excel_share.dart';
 import '../../../../core/utils/grade_calculator.dart';
 import '../../../../core/utils/number_utils.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/grade_model.dart';
 import '../../../../shared/services/database_service.dart';
+import '../../../attendance/presentation/screens/attendance_report_screen.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -61,9 +59,17 @@ class _ReportsScreenState extends State<ReportsScreen> {
 
     try {
       final students = await _db.getStudentsInClass(_selectedClass!.id);
-      final assessments = await _db.getAssessments(_selectedClass!.id);
+      // نفس ما تعرضه شاشة نتائج الفصل: التقييمات المحتسبة فقط، مع الترتيب
+      final assessments = (await _db.getAssessments(_selectedClass!.id))
+          .where((a) => a.isActive)
+          .toList();
       final settings = await _db.getGradeSettings(_selectedClass!.id);
       final policy = settings?.missingGradePolicy ?? 'exclude';
+      final scale = (settings == null || settings.gradingScale.isEmpty)
+          ? GradeCalculator.defaultScale
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList()
+          : settings.gradingScale;
 
       // جلب كل الدرجات بطلب واحد وتجميعها حسب (تقييم، طالب)
       final allGrades =
@@ -71,6 +77,15 @@ class _ReportsScreenState extends State<ReportsScreen> {
       final gradeLookup = <String, GradeModel>{
         for (final g in allGrades) '${g.assessmentId}|${g.studentId}': g,
       };
+
+      final results = GradeCalculator.classResults(
+        studentIds: students.map((s) => s.id).toList(),
+        assessments: assessments,
+        grades: allGrades,
+        policy: policy,
+        scale: scale,
+      );
+      final resultById = {for (final r in results) r.studentId: r};
 
       final excel = Excel.createExcel();
       const sheetName = 'كشف الدرجات';
@@ -94,17 +109,16 @@ class _ReportsScreenState extends State<ReportsScreen> {
         header.add(TextCellValue('${a.name} (${formatNumber(a.weight)}%)'));
       }
       header.add(TextCellValue('المعدل (%)'));
+      header.add(TextCellValue('التقدير'));
+      header.add(TextCellValue('الترتيب'));
       sheet.appendRow(header);
 
-      // صفوف الطلاب
+      // صفوف الطلاب بترتيب القائمة، والترتيب في عمود مستقل
       for (final student in students) {
         final row = <CellValue?>[TextCellValue(student.fullName)];
-        final items = <({AssessmentModel assessment, GradeModel? grade})>[];
 
         for (final a in assessments) {
           final g = gradeLookup['${a.id}|${student.id}'];
-          items.add((assessment: a, grade: g));
-
           if (g?.rawScore != null) {
             row.add(DoubleCellValue(g!.rawScore!));
           } else {
@@ -112,32 +126,20 @@ class _ReportsScreenState extends State<ReportsScreen> {
           }
         }
 
-        final avg = GradeCalculator.calculateFinalAverage(
-          items: items,
-          policy: policy,
-        );
+        final r = resultById[student.id];
+        final avg = r?.average;
         row.add(avg != null
             ? DoubleCellValue(double.parse(avg.toStringAsFixed(2)))
             : TextCellValue('-'));
+        row.add(TextCellValue(r?.letter ?? '-'));
+        row.add(r?.rank != null ? IntCellValue(r!.rank!) : TextCellValue('-'));
 
         sheet.appendRow(row);
       }
 
-      final dir = await getTemporaryDirectory();
-      // اسم ملف آمن (بدون رموز/مسافات قد تفشل في المشاركة)
-      final safeName = _selectedClass!.name
-          .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), '_')
-          .replaceAll(RegExp(r'^_+|_+$'), '');
-      final fileName =
-          'grades_${safeName.isEmpty ? 'class' : safeName}_${DateTime.now().millisecondsSinceEpoch}.xlsx';
-      final path = '${dir.path}${Platform.pathSeparator}$fileName';
-      final bytes = excel.encode();
-      if (bytes == null) {
-        throw StateError('تعذّر إنشاء ملف Excel');
-      }
-      await File(path).writeAsBytes(bytes);
-      await Share.shareXFiles(
-        [XFile(path)],
+      await shareExcel(
+        excel,
+        baseName: 'grades_${_selectedClass!.name}',
         text: 'كشف درجات ${_selectedClass!.name}',
       );
 
@@ -208,10 +210,21 @@ class _ReportsScreenState extends State<ReportsScreen> {
                     child: ListTile(
                       leading: const Icon(Icons.calendar_month, color: Colors.blue),
                       title: const Text('تقرير الحضور'),
-                      subtitle: const Text('قريباً'),
+                      subtitle: const Text('نسب الحضور والغياب لكل طالب مع تصدير Excel'),
+                      trailing: const Icon(Icons.chevron_left),
                       onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('تقرير الحضور قيد التطوير')),
+                        final cls = _selectedClass;
+                        if (cls == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('اختر فصلاً أولاً')),
+                          );
+                          return;
+                        }
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AttendanceReportScreen(classModel: cls),
+                          ),
                         );
                       },
                     ),

@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/widgets/confirm_dialog.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
 import 'class_detail_screen.dart';
+import 'package:teacher_app/core/utils/color_utils.dart';
 
 class ClassesScreen extends StatefulWidget {
   const ClassesScreen({super.key});
@@ -11,7 +14,7 @@ class ClassesScreen extends StatefulWidget {
   State<ClassesScreen> createState() => _ClassesScreenState();
 }
 
-class _ClassesScreenState extends State<ClassesScreen> {
+class _ClassesScreenState extends State<ClassesScreen> with SyncRefreshMixin {
   final _db = DatabaseService();
   List<ClassModel> _classes = [];
   bool _isLoading = true;
@@ -23,20 +26,26 @@ class _ClassesScreenState extends State<ClassesScreen> {
     _loadClasses();
   }
 
-  Future<void> _loadClasses() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  @override
+  Future<void> reloadSilently() => _loadClasses(silent: true);
+
+  Future<void> _loadClasses({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
     try {
       final list = await _db.getClasses();
       if (!mounted) return;
       setState(() {
         _classes = list;
         _isLoading = false;
+        _error = null;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() {
         _error = friendlyError(e);
         _isLoading = false;
@@ -44,19 +53,22 @@ class _ClassesScreenState extends State<ClassesScreen> {
     }
   }
 
-  Future<void> _showAddClassDialog() async {
-    final nameController = TextEditingController();
-    final subjectController = TextEditingController();
+  /// نافذة واحدة للإضافة والتعديل. [existing] == null يعني إضافة.
+  Future<void> _showClassDialog({ClassModel? existing}) async {
+    final nameController = TextEditingController(text: existing?.name);
+    final subjectController = TextEditingController(text: existing?.subject);
     final now = DateTime.now();
     // العام الدراسي يبدأ تقريباً في شهر 8 (أغسطس)
     final startYear = now.month >= 8 ? now.year : now.year - 1;
-    final yearController =
-        TextEditingController(text: '$startYear-${startYear + 1}');
+    final yearController = TextEditingController(
+        text: existing != null
+            ? existing.academicYear
+            : '$startYear-${startYear + 1}');
 
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('إضافة فصل جديد'),
+        title: Text(existing == null ? 'إضافة فصل جديد' : 'تعديل الفصل'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -105,15 +117,29 @@ class _ClassesScreenState extends State<ClassesScreen> {
     if (result != true) return;
 
     try {
-      await _db.createClass(
-        name: name,
-        subject: subject.isEmpty ? null : subject,
-        academicYear: year.isEmpty ? null : year,
-      );
-      _loadClasses();
+      if (existing == null) {
+        await _db.createClass(
+          name: name,
+          subject: subject.isEmpty ? null : subject,
+          academicYear: year.isEmpty ? null : year,
+        );
+      } else {
+        await _db.updateClass(
+          id: existing.id,
+          name: name,
+          subject: subject.isEmpty ? null : subject,
+          academicYear: year.isEmpty ? null : year,
+        );
+      }
+      _loadClasses(silent: true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إضافة الفصل بنجاح'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(existing == null
+                ? 'تم إضافة الفصل بنجاح'
+                : 'تم حفظ التعديلات'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -126,26 +152,33 @@ class _ClassesScreenState extends State<ClassesScreen> {
   }
 
   Future<void> _deleteClass(ClassModel cls) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('حذف الفصل'),
-        content: Text('هل تريد حذف فصل "${cls.name}"؟\n(سيتم أرشفة الفصل)'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('حذف'),
-          ),
-        ],
-      ),
-    );
-    if (confirm != true) return;
-
     try {
+      final impact = await _db.classDeletionImpact(cls.id);
+      final lines = <String>[
+        if (impact.students > 0) '• ${impact.students} طالب في الفصل',
+        if (impact.sessions > 0) '• ${impact.sessions} جلسة حضور',
+        if (impact.assessments > 0) '• ${impact.assessments} تقييم بدرجاته',
+      ];
+      final message = StringBuffer('سيختفي فصل "${cls.name}"');
+      if (lines.isNotEmpty) {
+        message
+          ..write(' وكل ما فيه من الشاشات والتقارير:\n')
+          ..write(lines.join('\n'));
+      } else {
+        message.write(' من القوائم.');
+      }
+      message.write('\n\nالطلاب أنفسهم لا يُحذفون. ويمكنك استعادة الفصل من سلة المحذوفات.');
+
+      if (!mounted) return;
+      final ok = await confirmDelete(
+        context,
+        title: 'حذف الفصل',
+        message: message.toString(),
+      );
+      if (!ok) return;
+
       await _db.softDeleteClass(cls.id);
-      _loadClasses();
+      _loadClasses(silent: true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -198,7 +231,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                     child: ListTile(
                       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                       leading: CircleAvatar(
-                        backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                        backgroundColor: Theme.of(context).primaryColor.soft(0.1),
                         child: Icon(Icons.class_, color: Theme.of(context).primaryColor),
                       ),
                       title: Text(cls.name, style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -206,9 +239,20 @@ class _ClassesScreenState extends State<ClassesScreen> {
                         if (cls.subject != null) cls.subject!,
                         if (cls.academicYear != null) cls.academicYear!,
                       ].join(' • ')),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () => _deleteClass(cls),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            tooltip: 'تعديل',
+                            icon: const Icon(Icons.edit_outlined),
+                            onPressed: () => _showClassDialog(existing: cls),
+                          ),
+                          IconButton(
+                            tooltip: 'حذف',
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => _deleteClass(cls),
+                          ),
+                        ],
                       ),
                       onTap: () {
                         Navigator.push(
@@ -216,7 +260,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
                           MaterialPageRoute(
                             builder: (_) => ClassDetailScreen(classModel: cls),
                           ),
-                        ).then((_) => _loadClasses());
+                        ).then((_) => _loadClasses(silent: true));
                       },
                     ),
                   );
@@ -224,7 +268,7 @@ class _ClassesScreenState extends State<ClassesScreen> {
               ),
             ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddClassDialog,
+        onPressed: () => _showClassDialog(),
         icon: const Icon(Icons.add),
         label: const Text('فصل جديد'),
       ),

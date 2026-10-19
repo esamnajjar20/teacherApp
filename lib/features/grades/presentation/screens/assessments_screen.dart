@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../../core/utils/number_utils.dart';
+import '../../../../core/widgets/confirm_dialog.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/models/grade_model.dart';
 import '../../../../shared/services/database_service.dart';
 import 'enter_grades_screen.dart';
+import 'grade_settings_screen.dart';
+import 'package:teacher_app/core/utils/color_utils.dart';
 
 class AssessmentsScreen extends StatefulWidget {
   final ClassModel classModel;
@@ -57,23 +60,34 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
 
   bool get _isWeightComplete => (_totalWeight - 100).abs() < 0.01;
 
-  Future<void> _showAddDialog() async {
-    final nameCtrl = TextEditingController();
-    final weightCtrl = TextEditingController(text: '20');
-    final maxCtrl = TextEditingController(text: '100');
-    String type = 'exam';
+  String _fmtDate(DateTime d) =>
+      '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
+
+  /// نافذة واحدة للإضافة والتعديل. [existing] == null يعني إضافة.
+  Future<void> _showFormDialog({AssessmentModel? existing}) async {
+    final nameCtrl = TextEditingController(text: existing?.name);
+    final weightCtrl = TextEditingController(
+        text: existing == null ? '20' : formatNumber(existing.weight));
+    final maxCtrl = TextEditingController(
+        text: existing == null ? '100' : formatNumber(existing.maxScore));
+    String type = existing?.type != null && _typeLabels.containsKey(existing!.type)
+        ? existing.type!
+        : 'exam';
+    DateTime? date = existing?.date;
+    bool active = existing?.isActive ?? true;
 
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('إضافة تقييم'),
+          title: Text(existing == null ? 'إضافة تقييم' : 'تعديل التقييم'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 TextField(
                   controller: nameCtrl,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(labelText: 'اسم التقييم'),
                   autofocus: true,
                 ),
@@ -81,19 +95,17 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                 DropdownButtonFormField<String>(
                   value: type,
                   decoration: const InputDecoration(labelText: 'النوع'),
-                  items: const [
-                    DropdownMenuItem(value: 'exam', child: Text('امتحان')),
-                    DropdownMenuItem(value: 'homework', child: Text('واجب')),
-                    DropdownMenuItem(value: 'participation', child: Text('مشاركة')),
-                    DropdownMenuItem(value: 'project', child: Text('مشروع')),
-                    DropdownMenuItem(value: 'quiz', child: Text('اختبار قصير')),
+                  items: [
+                    for (final e in _typeLabels.entries)
+                      DropdownMenuItem(value: e.key, child: Text(e.value)),
                   ],
                   onChanged: (v) => setDialogState(() => type = v ?? 'exam'),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: weightCtrl,
-                  keyboardType: TextInputType.number,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
                     labelText: 'الوزن (%)',
                     hintText: 'مثال: 30',
@@ -102,11 +114,45 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: maxCtrl,
-                  keyboardType: TextInputType.number,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: const InputDecoration(
                     labelText: 'الدرجة العظمى',
                     hintText: 'مثال: 20 أو 100',
                   ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.event, size: 18),
+                        label: Text(date == null ? 'تاريخ التقييم (اختياري)' : _fmtDate(date!)),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: date ?? DateTime.now(),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2100),
+                            locale: const Locale('ar'),
+                          );
+                          if (picked != null) setDialogState(() => date = picked);
+                        },
+                      ),
+                    ),
+                    if (date != null)
+                      IconButton(
+                        tooltip: 'إزالة التاريخ',
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => setDialogState(() => date = null),
+                      ),
+                  ],
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('محتسب في المعدل'),
+                  subtitle: const Text('أوقفه لاستبعاد التقييم من المعدل دون حذفه'),
+                  value: active,
+                  onChanged: (v) => setDialogState(() => active = v),
                 ),
               ],
             ),
@@ -149,11 +195,15 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
       return;
     }
 
-    if (_totalWeight + weight > 100.01) {
+    // مجموع الأوزان بعد الحفظ (نستبعد وزن التقييم نفسه عند التعديل)
+    final others = _assessments
+        .where((a) => a.isActive && a.id != existing?.id)
+        .fold(0.0, (sum, a) => sum + a.weight);
+    if (active && others + weight > 100.01) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'تنبيه: مجموع الأوزان سيتجاوز 100% (الحالي: ${formatNumber(_totalWeight)}%)',
+            'تنبيه: مجموع الأوزان سيتجاوز 100% (سيصبح ${formatNumber(double.parse((others + weight).toStringAsFixed(2)))}%)',
           ),
           backgroundColor: Colors.orange,
         ),
@@ -162,17 +212,44 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     }
 
     try {
-      await _db.createAssessment(
-        classId: widget.classModel.id,
-        name: name,
-        type: type,
-        weight: weight,
-        maxScore: maxScore,
-      );
+      if (existing == null) {
+        final created = await _db.createAssessment(
+          classId: widget.classModel.id,
+          name: name,
+          type: type,
+          weight: weight,
+          maxScore: maxScore,
+          date: date,
+        );
+        if (!active) {
+          await _db.updateAssessment(
+            id: created.id,
+            name: name,
+            type: type,
+            weight: weight,
+            maxScore: maxScore,
+            date: date,
+            isActive: false,
+          );
+        }
+      } else {
+        await _db.updateAssessment(
+          id: existing.id,
+          name: name,
+          type: type,
+          weight: weight,
+          maxScore: maxScore,
+          date: date,
+          isActive: active,
+        );
+      }
       _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إضافة التقييم'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(existing == null ? 'تم إضافة التقييم' : 'تم حفظ التعديلات'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -185,22 +262,17 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
   }
 
   Future<void> _delete(AssessmentModel a) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('حذف التقييم'),
-        content: Text('هل تريد حذف "${a.name}"؟'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('حذف'),
-          ),
-        ],
-      ),
+    final grades = await _db.getGradesForAssessment(a.id);
+    final withScores = grades.where((g) => g.rawScore != null).length;
+    if (!mounted) return;
+    final ok = await confirmDelete(
+      context,
+      title: 'حذف التقييم',
+      message: withScores > 0
+          ? 'سيُحذف "${a.name}" مع $withScores درجة مُدخلة، ويتغير معدل الطلاب.\n\nيمكنك استعادته من سلة المحذوفات.'
+          : 'سيُحذف "${a.name}".\n\nيمكنك استعادته من سلة المحذوفات.',
     );
-    if (confirm != true || !mounted) return;
+    if (!ok || !mounted) return;
 
     try {
       await _db.softDeleteAssessment(a.id);
@@ -230,6 +302,19 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('تقييمات ${widget.classModel.name}'),
+        actions: [
+          IconButton(
+            tooltip: 'إعدادات الدرجات',
+            icon: const Icon(Icons.tune),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    GradeSettingsScreen(classModel: widget.classModel),
+              ),
+            ),
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -271,7 +356,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                               const Text('لا توجد تقييمات بعد'),
                               const SizedBox(height: 8),
                               ElevatedButton(
-                                onPressed: _showAddDialog,
+                                onPressed: _showFormDialog,
                                 child: const Text('إضافة تقييم'),
                               ),
                             ],
@@ -286,7 +371,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                               margin: const EdgeInsets.only(bottom: 8),
                               child: ListTile(
                                 leading: CircleAvatar(
-                                  backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
+                                  backgroundColor: Theme.of(context).primaryColor.soft(0.1),
                                   child: Text(
                                     '${formatNumber(a.weight)}%',
                                     style: TextStyle(
@@ -297,7 +382,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                                   ),
                                 ),
                                 title: Text(a.name, style: const TextStyle(fontWeight: FontWeight.w600)),
-                                subtitle: Text('من ${formatNumber(a.maxScore)} • ${_typeLabel(a.type)}'),
+                                subtitle: Text('من ${formatNumber(a.maxScore)} • ${_typeLabel(a.type)}${a.date == null ? '' : ' • ${_fmtDate(a.date!)}'}${a.isActive ? '' : ' • غير محتسب'}'),
                                 trailing: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -317,6 +402,12 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
                                       },
                                     ),
                                     IconButton(
+                                      tooltip: 'تعديل التقييم',
+                                      icon: const Icon(Icons.edit_outlined),
+                                      onPressed: () => _showFormDialog(existing: a),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'حذف',
                                       icon: const Icon(Icons.delete_outline, color: Colors.red),
                                       onPressed: () => _delete(a),
                                     ),
@@ -341,7 +432,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
               ],
             ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddDialog,
+        onPressed: _showFormDialog,
         icon: const Icon(Icons.add),
         label: const Text('تقييم جديد'),
       ),

@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/widgets/confirm_dialog.dart';
+import '../../../../core/widgets/student_picker_dialog.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
+import '../../../attendance/presentation/screens/attendance_history_screen.dart';
 import '../../../attendance/presentation/screens/take_attendance_screen.dart';
 import '../../../grades/presentation/screens/assessments_screen.dart';
+import '../../../grades/presentation/screens/class_results_screen.dart';
+import 'bulk_students_screen.dart';
+import 'student_detail_screen.dart';
 
 class ClassDetailScreen extends StatefulWidget {
   final ClassModel classModel;
@@ -15,7 +22,8 @@ class ClassDetailScreen extends StatefulWidget {
   State<ClassDetailScreen> createState() => _ClassDetailScreenState();
 }
 
-class _ClassDetailScreenState extends State<ClassDetailScreen> {
+class _ClassDetailScreenState extends State<ClassDetailScreen>
+    with SyncRefreshMixin {
   final _db = DatabaseService();
   List<StudentModel> _enrolled = [];
   List<StudentModel> _allStudents = [];
@@ -27,8 +35,11 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _isLoading = true);
+  @override
+  Future<void> reloadSilently() => _load(silent: true);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     try {
       final enrolled = await _db.getStudentsInClass(widget.classModel.id);
       final all = await _db.getStudents();
@@ -39,7 +50,7 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -60,30 +71,29 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
       return;
     }
 
-    final selected = await showDialog<StudentModel>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('إضافة طالب للفصل'),
-        children: available.map((s) {
-          return SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, s),
-            child: Text(s.fullName),
-          );
-        }).toList(),
-      ),
+    final selected = await showStudentPickerDialog(
+      context,
+      students: available,
     );
 
-    if (selected == null || !mounted) return;
+    if (selected == null || selected.isEmpty || !mounted) return;
 
     try {
-      await _db.enrollStudent(
-        classId: widget.classModel.id,
-        studentId: selected.id,
-      );
+      for (final student in selected) {
+        await _db.enrollStudent(
+          classId: widget.classModel.id,
+          studentId: student.id,
+        );
+      }
       _load();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إضافة الطالب'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(selected.length == 1
+                ? 'تم إضافة الطالب'
+                : 'تم إضافة ${selected.length} طلاب'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -95,23 +105,25 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
     }
   }
 
-  Future<void> _unenroll(StudentModel student) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('إزالة طالب'),
-        content: Text('هل تريد إزالة "${student.fullName}" من الفصل؟'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('إزالة'),
-          ),
-        ],
+  Future<void> _addNewMany() async {
+    final added = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => BulkStudentsScreen(classModel: widget.classModel),
       ),
     );
-    if (confirm != true || !mounted) return;
+    if (added == true) _load(silent: true);
+  }
+
+  Future<void> _unenroll(StudentModel student) async {
+    final confirm = await confirmDelete(
+      context,
+      title: 'إزالة طالب',
+      message:
+          'هل تريد إزالة "${student.fullName}" من الفصل؟\nتبقى بياناته وسجلاته ويمكن إعادة إضافته.',
+      confirmLabel: 'إزالة',
+    );
+    if (!confirm || !mounted) return;
 
     try {
       await _db.unenrollStudent(
@@ -181,6 +193,40 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
                     ],
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ClassResultsScreen(classModel: widget.classModel),
+                        ),
+                      ),
+                      icon: const Icon(Icons.emoji_events_outlined),
+                      label: const Text('نتائج الفصل والترتيب'),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => AttendanceHistoryScreen(
+                              classModel: widget.classModel),
+                        ),
+                      ),
+                      icon: const Icon(Icons.event_note_outlined),
+                      label: const Text('سجل الحضور السابق'),
+                    ),
+                  ),
+                ),
                 const Divider(height: 1),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -191,10 +237,19 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
                         'الطلاب (${_enrolled.length})',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                       ),
-                      TextButton.icon(
-                        onPressed: _showEnrollDialog,
-                        icon: const Icon(Icons.person_add, size: 18),
-                        label: const Text('إضافة'),
+                      Row(
+                        children: [
+                          TextButton.icon(
+                            onPressed: _addNewMany,
+                            icon: const Icon(Icons.group_add, size: 18),
+                            label: const Text('طلاب جدد'),
+                          ),
+                          TextButton.icon(
+                            onPressed: _showEnrollDialog,
+                            icon: const Icon(Icons.person_add, size: 18),
+                            label: const Text('إضافة'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -221,6 +276,12 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
                           itemBuilder: (context, index) {
                             final s = _enrolled[index];
                             return ListTile(
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => StudentDetailScreen(student: s),
+                                ),
+                              ).then((_) => _load(silent: true)),
                               leading: CircleAvatar(
                                 child: Text(s.fullName.isNotEmpty ? s.fullName[0] : '?'),
                               ),
@@ -229,6 +290,7 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> {
                                   ? Text('الرقم: ${s.studentCode}')
                                   : null,
                               trailing: IconButton(
+                                tooltip: 'إزالة من الفصل',
                                 icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
                                 onPressed: () => _unenroll(s),
                               ),

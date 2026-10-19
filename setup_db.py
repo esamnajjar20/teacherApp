@@ -36,7 +36,7 @@ def main():
         sys.exit(1)
 
     # البحث عن ملفات SQL
-    sql_files = sorted(glob.glob('supabase/*.sql'))
+    sql_files = sorted(glob.glob('supabase/migrations/*.sql'))
     if not sql_files:
         print("⚠️ لم يتم العثور على ملفات SQL في مجلد supabase/")
         sys.exit(1)

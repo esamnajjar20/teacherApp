@@ -45,22 +45,6 @@ class AssessmentModel extends Equatable {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'class_id': classId,
-      'name': name,
-      'type': type,
-      'weight': weight,
-      'max_score': maxScore,
-      'date': date?.toIso8601String().split('T').first,
-      'is_active': isActive,
-      'deleted_at': deletedAt?.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-  }
-
   @override
   List<Object?> get props => [
         id,
@@ -127,19 +111,6 @@ class GradeModel extends Equatable {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'assessment_id': assessmentId,
-      'student_id': studentId,
-      'raw_score': rawScore,
-      'notes': notes,
-      'deleted_at': deletedAt?.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-  }
-
   GradeModel copyWith({
     double? rawScore,
     String? notes,
@@ -190,17 +161,6 @@ class GradeSettingsModel extends Equatable {
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'class_id': classId,
-      'grading_scale': gradingScale,
-      'missing_grade_policy': missingGradePolicy,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
   }
 
   @override

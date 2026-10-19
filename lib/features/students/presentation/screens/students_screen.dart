@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:teacher_app/core/utils/color_utils.dart';
+
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/widgets/confirm_dialog.dart';
+import '../../../../core/widgets/student_form_dialog.dart';
+import '../../../../core/widgets/student_picker_dialog.dart'
+    show studentMatchesQuery;
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
+import 'bulk_students_screen.dart';
+import 'student_detail_screen.dart';
 
 class StudentsScreen extends StatefulWidget {
   const StudentsScreen({super.key});
@@ -10,11 +19,13 @@ class StudentsScreen extends StatefulWidget {
   State<StudentsScreen> createState() => _StudentsScreenState();
 }
 
-class _StudentsScreenState extends State<StudentsScreen> {
+class _StudentsScreenState extends State<StudentsScreen> with SyncRefreshMixin {
   final _db = DatabaseService();
   List<StudentModel> _students = [];
   bool _isLoading = true;
   String? _error;
+  String _query = '';
+  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -22,20 +33,32 @@ class _StudentsScreenState extends State<StudentsScreen> {
     _loadStudents();
   }
 
-  Future<void> _loadStudents() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Future<void> reloadSilently() => _loadStudents(silent: true);
+
+  Future<void> _loadStudents({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
     try {
       final list = await _db.getStudents();
       if (!mounted) return;
       setState(() {
         _students = list;
         _isLoading = false;
+        _error = null;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() {
         _error = friendlyError(e);
         _isLoading = false;
@@ -43,106 +66,97 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
   }
 
-  Future<void> _showAddStudentDialog() async {
-    final nameController = TextEditingController();
-    final codeController = TextEditingController();
-    final phoneController = TextEditingController();
-
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('إضافة طالب جديد'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'اسم الطالب'),
-                autofocus: true,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: codeController,
-                decoration: const InputDecoration(labelText: 'رقم الطالب / الهوية'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: phoneController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'جوال ولي الأمر (اختياري)'),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          ElevatedButton(
-            onPressed: () {
-              if (nameController.text.trim().isEmpty) return;
-              Navigator.pop(ctx, true);
-            },
-            child: const Text('حفظ'),
-          ),
-        ],
-      ),
+  void _showError(Object e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
     );
+  }
 
-    final fullName = nameController.text.trim();
-    final code = codeController.text.trim();
-    final phone = phoneController.text.trim();
-
-    if (result != true) return;
+  /// إضافة طالب أو تعديله. [existing] == null يعني إضافة.
+  Future<void> _showStudentDialog({StudentModel? existing}) async {
+    final data = await showStudentFormDialog(context, existing: existing);
+    if (data == null) return;
 
     try {
-      await _db.createStudent(
-        fullName: fullName,
-        studentCode: code.isEmpty ? null : code,
-        parentPhone: phone.isEmpty ? null : phone,
-      );
-      _loadStudents();
+      if (existing == null) {
+        await _db.createStudent(
+          fullName: data.fullName,
+          studentCode: data.code,
+          parentPhone: data.phone,
+        );
+      } else {
+        await _db.updateStudent(
+          id: existing.id,
+          fullName: data.fullName,
+          studentCode: data.code,
+          parentPhone: data.phone,
+        );
+      }
+      _loadStudents(silent: true);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إضافة الطالب بنجاح'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(existing == null
+                ? 'تم إضافة الطالب بنجاح'
+                : 'تم حفظ التعديلات'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
-        );
-      }
+      _showError(e);
     }
   }
 
-  Future<void> _deleteStudent(StudentModel student) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('حذف الطالب'),
-        content: Text('هل تريد حذف "${student.fullName}"؟'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('إلغاء')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('حذف'),
-          ),
-        ],
-      ),
+  Future<void> _addMany() async {
+    final added = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const BulkStudentsScreen()),
     );
-    if (confirm != true) return;
+    if (added == true) _loadStudents(silent: true);
+  }
 
+  Future<void> _deleteStudent(StudentModel student) async {
     try {
-      await _db.softDeleteStudent(student.id);
-      _loadStudents();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
-        );
+      final impact = await _db.studentDeletionImpact(student.id);
+      final lines = <String>[
+        if (impact.classes > 0) '• تسجيله في ${impact.classes} فصل',
+        if (impact.records > 0) '• ${impact.records} سجل حضور',
+        if (impact.grades > 0) '• ${impact.grades} درجة',
+      ];
+      final message = StringBuffer('سيختفي "${student.fullName}"');
+      if (lines.isNotEmpty) {
+        message
+          ..write(' وبياناته من كل الفصول والتقارير:\n')
+          ..write(lines.join('\n'));
+      } else {
+        message.write(' من القوائم.');
       }
+      message.write('\n\nيمكنك استعادته لاحقاً من سلة المحذوفات.');
+
+      if (!mounted) return;
+      final ok = await confirmDelete(
+        context,
+        title: 'حذف الطالب',
+        message: message.toString(),
+      );
+      if (!ok) return;
+
+      await _db.softDeleteStudent(student.id);
+      _loadStudents(silent: true);
+    } catch (e) {
+      _showError(e);
     }
+  }
+
+  void _openProfile(StudentModel student) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StudentDetailScreen(student: student),
+      ),
+    ).then((_) => _loadStudents(silent: true));
   }
 
   @override
@@ -156,11 +170,15 @@ class _StudentsScreenState extends State<StudentsScreen> {
           children: [
             Text(_error!, textAlign: TextAlign.center),
             const SizedBox(height: 16),
-            ElevatedButton(onPressed: _loadStudents, child: const Text('إعادة المحاولة')),
+            ElevatedButton(
+                onPressed: _loadStudents, child: const Text('إعادة المحاولة')),
           ],
         ),
       );
     }
+
+    final visible =
+        _students.where((s) => studentMatchesQuery(s, _query)).toList();
 
     return Scaffold(
       body: _students.isEmpty
@@ -170,47 +188,133 @@ class _StudentsScreenState extends State<StudentsScreen> {
                 children: [
                   Icon(Icons.people_outline, size: 64, color: Colors.grey[400]),
                   const SizedBox(height: 16),
-                  Text('لا يوجد طلاب بعد', style: TextStyle(fontSize: 18, color: Colors.grey[600])),
+                  Text('لا يوجد طلاب بعد',
+                      style: TextStyle(fontSize: 18, color: Colors.grey[600])),
                   const SizedBox(height: 8),
-                  Text('اضغط + لإضافة طالب جديد', style: TextStyle(color: Colors.grey[500])),
+                  Text('اضغط + لإضافة طالب جديد',
+                      style: TextStyle(color: Colors.grey[500])),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    onPressed: _addMany,
+                    icon: const Icon(Icons.group_add),
+                    label: const Text('إضافة عدة طلاب / استيراد من Excel'),
+                  ),
                 ],
               ),
             )
-          : RefreshIndicator(
-              onRefresh: _loadStudents,
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: _students.length,
-                itemBuilder: (context, index) {
-                  final student = _students[index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: Theme.of(context).primaryColor.withOpacity(0.1),
-                        child: Text(
-                          student.fullName.isNotEmpty ? student.fullName[0] : '?',
-                          style: TextStyle(
-                            color: Theme.of(context).primaryColor,
-                            fontWeight: FontWeight.bold,
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchCtrl,
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.search),
+                            hintText: 'ابحث بالاسم أو الرقم أو الجوال',
+                            suffixIcon: _query.isEmpty
+                                ? null
+                                : IconButton(
+                                    tooltip: 'مسح البحث',
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      _searchCtrl.clear();
+                                      setState(() => _query = '');
+                                    },
+                                  ),
                           ),
+                          onChanged: (v) => setState(() => _query = v),
                         ),
                       ),
-                      title: Text(student.fullName, style: const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: student.studentCode != null
-                          ? Text('الرقم: ${student.studentCode}')
-                          : null,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () => _deleteStudent(student),
+                      IconButton(
+                        tooltip: 'إضافة عدة طلاب / استيراد من Excel',
+                        icon: const Icon(Icons.group_add),
+                        onPressed: _addMany,
                       ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      _query.isEmpty
+                          ? '${_students.length} طالب'
+                          : '${visible.length} من ${_students.length}',
+                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
                     ),
-                  );
-                },
-              ),
+                  ),
+                ),
+                Expanded(
+                  child: visible.isEmpty
+                      ? const Center(child: Text('لا توجد نتائج مطابقة'))
+                      : RefreshIndicator(
+                          onRefresh: _loadStudents,
+                          child: ListView.builder(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: visible.length,
+                            itemBuilder: (context, index) {
+                              final student = visible[index];
+                              final details = [
+                                if (student.studentCode != null)
+                                  'الرقم: ${student.studentCode}',
+                                if (student.parentPhone != null)
+                                  'ولي الأمر: ${student.parentPhone}',
+                              ].join('  •  ');
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                child: ListTile(
+                                  // نفس سلوك قائمة طلاب الفصل: النقر يفتح الملف الشخصي
+                                  onTap: () => _openProfile(student),
+                                  leading: CircleAvatar(
+                                    backgroundColor: Theme.of(context)
+                                        .primaryColor
+                                        .soft(0.1),
+                                    child: Text(
+                                      student.fullName.isNotEmpty
+                                          ? student.fullName[0]
+                                          : '?',
+                                      style: TextStyle(
+                                        color: Theme.of(context).primaryColor,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  title: Text(student.fullName,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.w600)),
+                                  subtitle:
+                                      details.isEmpty ? null : Text(details),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'تعديل',
+                                        icon: const Icon(Icons.edit_outlined),
+                                        onPressed: () => _showStudentDialog(
+                                            existing: student),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'حذف',
+                                        icon: const Icon(Icons.delete_outline,
+                                            color: Colors.red),
+                                        onPressed: () => _deleteStudent(student),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                ),
+              ],
             ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddStudentDialog,
+        onPressed: () => _showStudentDialog(),
         icon: const Icon(Icons.person_add),
         label: const Text('طالب جديد'),
       ),

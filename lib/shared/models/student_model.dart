@@ -41,20 +41,6 @@ class StudentModel extends Equatable {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'teacher_id': teacherId,
-      'full_name': fullName,
-      'student_code': studentCode,
-      'parent_phone': parentPhone,
-      'notes': notes,
-      'deleted_at': deletedAt?.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-  }
-
   StudentModel copyWith({
     String? id,
     String? teacherId,

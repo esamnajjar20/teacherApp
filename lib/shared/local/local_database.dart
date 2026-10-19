@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
@@ -142,8 +143,18 @@ class LocalDatabase {
 
   Future<Database>? _future;
   String? _userId;
+  Database? _testDb;
+
+  /// للاختبارات فقط: يستخدم قاعدة جاهزة (مثل in-memory) بدل ملف المستخدم،
+  /// دون الحاجة لجلسة Supabase. مرّر null للعودة للسلوك العادي.
+  @visibleForTesting
+  void useDatabaseForTesting(Database? db) {
+    _testDb = db;
+  }
 
   Future<Database> open() {
+    final testDb = _testDb;
+    if (testDb != null) return Future.value(testDb);
     final uid = supabase.auth.currentUser?.id;
     if (uid == null) {
       return Future.error(StateError('انتهت الجلسة، سجّل الدخول من جديد'));
@@ -162,13 +173,21 @@ class LocalDatabase {
       return openDatabase(
         p.join(dir, 'teacher_$uid.db'),
         version: 1,
-        onCreate: _create,
+        onCreate: createSchema,
       );
     }();
     return _future!;
   }
 
+  /// يحذف ملف قاعدة مستخدم من الجهاز (عند حذف الحساب).
+  Future<void> deleteForUser(String uid) async {
+    await close();
+    final dir = await getDatabasesPath();
+    await deleteDatabase(p.join(dir, 'teacher_$uid.db'));
+  }
+
   Future<void> close() async {
+    if (_testDb != null) return; // الاختبار هو من يغلق قاعدته
     final f = _future;
     _future = null;
     _userId = null;
@@ -192,7 +211,8 @@ class LocalDatabase {
     }
   }
 
-  Future<void> _create(Database db, int version) async {
+  /// ينشئ كل الجداول والفهارس المحلية (يُستخدم أيضاً في الاختبارات).
+  static Future<void> createSchema(Database db, int version) async {
     for (final t in kTables) {
       final cols = t.cols.entries
           .map((e) =>

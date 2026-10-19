@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 import 'assessments_screen.dart';
+import 'package:teacher_app/core/utils/color_utils.dart';
 
 class GradesListScreen extends StatefulWidget {
   const GradesListScreen({super.key});
@@ -11,7 +13,8 @@ class GradesListScreen extends StatefulWidget {
   State<GradesListScreen> createState() => _GradesListScreenState();
 }
 
-class _GradesListScreenState extends State<GradesListScreen> {
+class _GradesListScreenState extends State<GradesListScreen>
+    with SyncRefreshMixin {
   final _db = DatabaseService();
   List<ClassModel> _classes = [];
   bool _isLoading = true;
@@ -22,8 +25,11 @@ class _GradesListScreenState extends State<GradesListScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _isLoading = true);
+  @override
+  Future<void> reloadSilently() => _load(silent: true);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     try {
       final list = await _db.getClasses();
       if (!mounted) return;
@@ -32,7 +38,7 @@ class _GradesListScreenState extends State<GradesListScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
@@ -94,7 +100,7 @@ class _GradesListScreenState extends State<GradesListScreen> {
                     margin: const EdgeInsets.only(bottom: 12),
                     child: ListTile(
                       leading: CircleAvatar(
-                        backgroundColor: Colors.amber.withOpacity(0.15),
+                        backgroundColor: Colors.amber.soft(0.15),
                         child: const Icon(Icons.grade, color: Colors.amber),
                       ),
                       title: Text(cls.name, style: const TextStyle(fontWeight: FontWeight.w600)),

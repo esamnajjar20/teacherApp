@@ -4,6 +4,7 @@ import '../../../../core/utils/number_utils.dart';
 import '../../../../shared/models/grade_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
+import 'package:teacher_app/core/utils/color_utils.dart';
 
 class EnterGradesScreen extends StatefulWidget {
   final AssessmentModel assessment;
@@ -24,6 +25,7 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
   late Map<String, TextEditingController> _controllers;
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _dirty = false;
 
   @override
   void initState() {
@@ -97,6 +99,7 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
       );
 
       if (mounted) {
+        _dirty = false;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم حفظ الدرجات'), backgroundColor: Colors.green),
         );
@@ -113,8 +116,43 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
     }
   }
 
+  Future<bool> _confirmDiscard() async {
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تعديلات غير محفوظة'),
+        content: const Text('لم تحفظ الدرجات بعد. هل تريد الخروج وتجاهل التعديلات؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('البقاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('خروج دون حفظ', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    return leave == true;
+  }
+
   @override
   Widget build(BuildContext context) {
+    return PopScope(
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop) return;
+        if (await _confirmDiscard() && mounted) {
+          setState(() => _dirty = false);
+          Navigator.pop(context);
+        }
+      },
+      child: _buildScaffold(context),
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.assessment.name),
@@ -138,7 +176,7 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(12),
-                  color: Theme.of(context).primaryColor.withOpacity(0.08),
+                  color: Theme.of(context).primaryColor.soft(0.08),
                   child: Text(
                     'الدرجة العظمى: ${formatNumber(widget.assessment.maxScore)}  •  الوزن: ${formatNumber(widget.assessment.weight)}%',
                     textAlign: TextAlign.center,
@@ -182,6 +220,12 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
                                       width: 90,
                                       child: TextField(
                                         controller: ctrl,
+                                        textInputAction: index == widget.students.length - 1
+                                            ? TextInputAction.done
+                                            : TextInputAction.next,
+                                        onChanged: (_) {
+                                          if (!_dirty) setState(() => _dirty = true);
+                                        },
                                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                         textAlign: TextAlign.center,
                                         decoration: InputDecoration(

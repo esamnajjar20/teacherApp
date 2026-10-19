@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'core/constants/app_constants.dart';
 import 'core/constants/supabase_config.dart';
 import 'core/theme/app_theme.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
@@ -38,11 +38,7 @@ Future<void> main() async {
     }
   });
 
-  runApp(
-    const ProviderScope(
-      child: TeacherApp(),
-    ),
-  );
+  runApp(const TeacherApp());
 }
 
 class TeacherApp extends StatelessWidget {
@@ -52,7 +48,7 @@ class TeacherApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       navigatorKey: navigatorKey,
-      title: 'تطبيق المعلمين',
+      title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       locale: const Locale('ar'),

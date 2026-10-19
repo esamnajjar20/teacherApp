@@ -23,7 +23,7 @@ else
 fi
 
 echo "⏳ جاري تنفيذ ملفات SQL..."
-for f in supabase/*.sql; do
+for f in supabase/migrations/*.sql; do
     echo "▶️ تنفيذ: $f"
     psql "$DB_URL" -f "$f"
     if [ $? -ne 0 ]; then

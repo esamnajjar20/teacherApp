@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/supabase_client.dart';
+import 'forgot_password_screen.dart';
+import 'otp_screen.dart';
 import 'register_screen.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../students/presentation/screens/home_screen.dart';
@@ -46,51 +49,18 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _errorMessage = friendlyError(e));
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  Future<void> _signUp() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final email = _emailController.text.trim();
-      final response = await supabase.auth.signUp(
-        email: email,
-        password: _passwordController.text,
-        data: {'full_name': email.split('@').first},
-      );
-
-      if (!mounted) return;
-
-      if (response.session != null) {
-        // التأكيد بالبريد معطّل في Supabase → المستخدم مسجّل دخوله فعلاً
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
+      // حساب لم يُؤكَّد بريده: نفتح شاشة الرمز ونرسل رمزاً جديداً
+      if (e is AuthException && e.message.contains('Email not confirmed')) {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OtpScreen(
+              email: _emailController.text.trim(),
+              sendCodeOnOpen: true,
+            ),
+          ),
         );
         return;
       }
-
-      // التأكيد بالبريد مفعّل → لا توجد جلسة بعد
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'تم إنشاء الحساب. تحقق من بريدك الإلكتروني لتأكيد الحساب ثم سجّل الدخول.',
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
       setState(() => _errorMessage = friendlyError(e));
     } finally {
       if (mounted) {
@@ -199,7 +169,23 @@ class _LoginScreenState extends State<LoginScreen> {
                       return null;
                     },
                   ),
-                  const SizedBox(height: 24),
+                  Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: TextButton(
+                      onPressed: _isLoading
+                          ? null
+                          : () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ForgotPasswordScreen(
+                                    initialEmail: _emailController.text.trim(),
+                                  ),
+                                ),
+                              ),
+                      child: const Text('نسيت كلمة المرور؟'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   ElevatedButton(
                     onPressed: _isLoading ? null : _signIn,
                     child: _isLoading

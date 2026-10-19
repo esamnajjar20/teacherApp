@@ -37,19 +37,6 @@ class AttendanceSessionModel extends Equatable {
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'class_id': classId,
-      'date': date.toIso8601String().split('T').first,
-      'period': period,
-      'notes': notes,
-      'deleted_at': deletedAt?.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
-  }
-
   @override
   List<Object?> get props =>
       [id, classId, date, period, notes, deletedAt, createdAt, updatedAt];
@@ -92,19 +79,6 @@ class AttendanceRecordModel extends Equatable {
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'session_id': sessionId,
-      'student_id': studentId,
-      'status': status,
-      'notes': notes,
-      'deleted_at': deletedAt?.toIso8601String(),
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
-    };
   }
 
   AttendanceRecordModel copyWith({

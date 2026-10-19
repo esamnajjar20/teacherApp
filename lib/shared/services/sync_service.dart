@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -10,6 +8,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../core/constants/supabase_client.dart';
 import '../../core/errors/error_message.dart';
 import '../local/local_database.dart';
+import 'sync_helpers.dart';
+
+export 'sync_helpers.dart' show SyncFailure;
 
 class SyncStatus {
   final bool syncing;
@@ -17,11 +18,15 @@ class SyncStatus {
   final DateTime? lastSync;
   final String? error;
 
+  /// السجلات التي يفشل رفعها (مع السبب)، لعرضها في شاشة «حسابي»
+  final List<SyncFailure> failures;
+
   const SyncStatus({
     this.syncing = false,
     this.pending = 0,
     this.lastSync,
     this.error,
+    this.failures = const [],
   });
 
   SyncStatus copyWith({
@@ -29,6 +34,7 @@ class SyncStatus {
     int? pending,
     DateTime? lastSync,
     String? error,
+    List<SyncFailure>? failures,
     bool clearError = false,
   }) {
     return SyncStatus(
@@ -36,6 +42,7 @@ class SyncStatus {
       pending: pending ?? this.pending,
       lastSync: lastSync ?? this.lastSync,
       error: clearError ? null : (error ?? this.error),
+      failures: failures ?? this.failures,
     );
   }
 }
@@ -44,9 +51,13 @@ class SyncStatus {
 ///
 /// - الرفع: كل صف dirty=1 يُرفع بـ upsert (بدون created_at/updated_at حتى
 ///   يضع السيرفر وقته هو، فتصل التعديلات لكل الأجهزة بترتيب صحيح).
-/// - السحب: تغييرات السيرفر بعد آخر مؤشر (cursor) لكل جدول، مع تداخل 5 ثوانٍ.
+/// - السحب: تغييرات السيرفر بعد آخر مؤشر (cursor) لكل جدول، مع تداخل 5 ثوانٍ،
+///   ويستمر حتى تصل صفحة فارغة (فلا يتأثر بإعداد Max Rows في Supabase).
 /// - التعارض: آخر رفع يفوز؛ الصف المعدّل محلياً ولم يُرفع لا يُستبدل عند السحب.
 /// - الحذف: soft delete فينتقل مثل أي تعديل.
+/// - السجل الذي يفشل رفعه يُعزل ويُعاد بتأخير تصاعدي (دقيقة → 30 دقيقة) بدل
+///   إعادته كل 45 ثانية، ويُعرض للمعلم باسمه وسبب الفشل. زر «مزامنة الآن»
+///   يتجاوز التأخير، وتعديل السجل يعيد المحاولة فوراً.
 class SyncService {
   SyncService._();
   static final SyncService instance = SyncService._();
@@ -60,6 +71,8 @@ class SyncService {
 
   /// يزداد كلما وصلت بيانات جديدة من السيرفر، لتحديث الشاشات
   final ValueNotifier<int> dataVersion = ValueNotifier(0);
+
+  final Map<String, SyncFailure> _failures = {};
 
   Timer? _periodic;
   Timer? _debounce;
@@ -87,6 +100,7 @@ class SyncService {
     _periodic = null;
     _debounce = null;
     _connSub = null;
+    _failures.clear();
     status.value = const SyncStatus();
   }
 
@@ -116,8 +130,10 @@ class SyncService {
     } catch (_) {}
   }
 
-  Future<void> sync() async {
+  /// [force] = true (زر المزامنة اليدوي) يتجاوز فترة الانتظار للسجلات الفاشلة.
+  Future<void> sync({bool force = false}) async {
     if (supabase.auth.currentSession == null) return;
+    if (force) _failures.clear();
     if (_running) {
       _again = true;
       return;
@@ -140,7 +156,7 @@ class SyncService {
         _again = false;
         final failed = await _push();
         if (await _pull()) pulledAny = true;
-        if (failed > 0) error = 'تعذّرت مزامنة $failed سجل، ستُعاد المحاولة';
+        if (failed > 0) error = _failureSummary(failed);
       } while (_again);
     } catch (e) {
       error = friendlyError(e);
@@ -155,9 +171,18 @@ class SyncService {
         pending: pending,
         lastSync: error == null ? DateTime.now() : status.value.lastSync,
         error: error,
+        failures: List.unmodifiable(_failures.values),
       );
       if (pulledAny) dataVersion.value++;
     }
+  }
+
+  String _failureSummary(int failed) {
+    if (_failures.length == 1) {
+      final f = _failures.values.first;
+      return 'تعذّرت مزامنة ${f.label}: ${f.message}';
+    }
+    return 'تعذّرت مزامنة $failed سجل، التفاصيل في شاشة «حسابي»';
   }
 
   // ======================= PUSH =======================
@@ -181,13 +206,37 @@ class SyncService {
     return failed;
   }
 
+  String _key(TableDef t, Map<String, Object?> row) => '${t.name}|${row['id']}';
+
   Future<int> _pushTable(TableDef t) async {
     final db = await LocalDatabase.instance.open();
-    final dirty = await db.query(t.name, where: 'dirty=1', orderBy: 'updated_at');
+    final all = await db.query(t.name, where: 'dirty=1', orderBy: 'updated_at');
+    final now = DateTime.now();
     var failed = 0;
 
+    // نحذف من قائمة الفشل ما لم يعد ينتظر الرفع (تمت تسويته أو حُذف)
+    final dirtyKeys = all.map((r) => _key(t, r)).toSet();
+    _failures.removeWhere((k, v) => v.table == t.name && !dirtyKeys.contains(k));
+
+    // نستبعد السجلات التي ما زالت في فترة الانتظار بعد فشل سابق
+    final dirty = <Map<String, Object?>>[];
+    for (final row in all) {
+      final key = _key(t, row);
+      final st = _failures[key];
+      if (st != null) {
+        if (st.updatedAt != row['updated_at']) {
+          _failures.remove(key); // عُدّل بعد الفشل: نعيد المحاولة فوراً
+        } else if (now.isBefore(st.nextAttempt)) {
+          failed++;
+          continue;
+        }
+      }
+      dirty.add(row);
+    }
+
     for (var i = 0; i < dirty.length; i += _pushBatch) {
-      final chunk = dirty.sublist(i, math.min(i + _pushBatch, dirty.length));
+      final end = i + _pushBatch > dirty.length ? dirty.length : i + _pushBatch;
+      final chunk = dirty.sublist(i, end);
       try {
         await _pushRows(t, chunk);
       } catch (e) {
@@ -209,6 +258,7 @@ class SyncService {
               }
             }
             failed++;
+            await _recordFailure(t, row, e2);
             debugPrint('sync push failed (${t.name}): $e2');
           }
         }
@@ -217,8 +267,58 @@ class SyncService {
     return failed;
   }
 
+  Future<void> _recordFailure(
+      TableDef t, Map<String, Object?> row, Object e) async {
+    final key = _key(t, row);
+    final attempts = (_failures[key]?.attempts ?? 0) + 1;
+    _failures[key] = SyncFailure(
+      table: t.name,
+      rowId: '${row['id']}',
+      label: await _describe(t, row),
+      message: pushErrorMessage(e),
+      attempts: attempts,
+      updatedAt: row['updated_at'] as String?,
+      nextAttempt: DateTime.now().add(retryDelay(attempts)),
+    );
+  }
+
+  Future<String> _studentName(Object? studentId) async {
+    final db = await LocalDatabase.instance.open();
+    final r = await db.query('students',
+        columns: ['full_name'],
+        where: 'id=?',
+        whereArgs: [studentId],
+        limit: 1);
+    return r.isEmpty ? 'طالب' : '${r.first['full_name']}';
+  }
+
+  /// وصف السجل بلغة المعلم، لعرضه في رسالة الخطأ
+  Future<String> _describe(TableDef t, Map<String, Object?> row) async {
+    try {
+      switch (t.name) {
+        case 'classes':
+          return 'فصل: ${row['name']}';
+        case 'students':
+          return 'طالب: ${row['full_name']}';
+        case 'enrollments':
+          return 'تسجيل ${await _studentName(row['student_id'])} في فصل';
+        case 'attendance_sessions':
+          return 'جلسة حضور ${row['date']}';
+        case 'attendance_records':
+          return 'حضور ${await _studentName(row['student_id'])}';
+        case 'assessments':
+          return 'تقييم: ${row['name']}';
+        case 'grades':
+          return 'درجة ${await _studentName(row['student_id'])}';
+        case 'grade_settings':
+          return 'إعدادات الدرجات';
+      }
+    } catch (_) {}
+    return t.name;
+  }
+
   Future<void> _pushRows(TableDef t, List<Map<String, Object?>> rows) async {
-    final payload = rows.map((r) => _toServer(t, r)).toList();
+    final payload = rows.map((r) => SyncCodec.toServer(t, r)).toList();
     final res = await supabase
         .from(t.name)
         .upsert(payload, onConflict: t.onConflict)
@@ -236,12 +336,15 @@ class SyncService {
         // إن تغيّر الصف محلياً أثناء الرفع يبقى dirty ويُرفع في الدورة التالية
         await txn.update(
           t.name,
-          _fromServer(t, s),
+          SyncCodec.fromServer(t, s),
           where: 'id=? AND updated_at=?',
           whereArgs: [r['id'], r['updated_at']],
         );
       }
     });
+    for (final r in rows) {
+      _failures.remove(_key(t, r));
+    }
   }
 
   /// جهازان أنشآ جلسة حضور لنفس الفصل واليوم: ندمج محلياً مع جلسة السيرفر
@@ -270,41 +373,6 @@ class SyncService {
     await _applyServerRows(tableDef('attendance_sessions'), [server]);
   }
 
-  Map<String, dynamic> _toServer(TableDef t, Map<String, Object?> row) {
-    final m = <String, dynamic>{};
-    for (final e in t.cols.entries) {
-      // الأوقات يضعها السيرفر
-      if (e.key == 'created_at' || e.key == 'updated_at') continue;
-      Object? v = row[e.key];
-      if (v != null) {
-        if (e.value == ColType.boolean) {
-          v = v == 1;
-        } else if (e.value == ColType.json) {
-          v = jsonDecode(v as String);
-        }
-      }
-      m[e.key] = v;
-    }
-    return m;
-  }
-
-  Map<String, Object?> _fromServer(TableDef t, Map<String, dynamic> r) {
-    final m = <String, Object?>{};
-    for (final e in t.cols.entries) {
-      Object? v = r[e.key];
-      if (v != null) {
-        if (e.value == ColType.boolean) {
-          v = (v == true) ? 1 : 0;
-        } else if (e.value == ColType.json) {
-          v = jsonEncode(v);
-        }
-      }
-      m[e.key] = v;
-    }
-    m['dirty'] = 0;
-    return m;
-  }
-
   // ======================= PULL =======================
 
   /// يرجع true إن تغيّر شيء محلياً
@@ -319,40 +387,41 @@ class SyncService {
   Future<bool> _pullTable(TableDef t) async {
     final metaKey = 'cursor_${t.name}';
     final cursor = await LocalDatabase.instance.getMeta(metaKey);
-    String? since;
-    if (cursor != null) {
-      since = DateTime.parse(cursor).subtract(_overlap).toUtc().toIso8601String();
-    }
+    final String? since = cursor == null
+        ? null
+        : DateTime.parse(cursor).subtract(_overlap).toUtc().toIso8601String();
 
-    var offset = 0;
     var maxTs = cursor;
     var changed = false;
 
-    while (true) {
-      var q = supabase.from(t.name).select();
-      if (since != null) q = q.gt('updated_at', since);
-      final rows = await q
-          .order('updated_at', ascending: true)
-          .order('id', ascending: true)
-          .range(offset, offset + _pageSize - 1);
-
-      for (final r in rows) {
-        final ts = r['updated_at'] as String?;
-        if (ts != null &&
-            (maxTs == null ||
-                DateTime.parse(ts).isAfter(DateTime.parse(maxTs)))) {
-          maxTs = ts;
+    // نكمل حتى صفحة فارغة. الاعتماد على rows.length < _pageSize كان يوقف السحب
+    // بصمت إن كان Max Rows في السيرفر أقل من حجم الصفحة، فيتقدم المؤشر وتضيع صفوف.
+    await fetchAllPages<Map<String, dynamic>>(
+      fetch: (offset) async {
+        var q = supabase.from(t.name).select();
+        final sinceTs = since;
+        if (sinceTs != null) q = q.gt('updated_at', sinceTs);
+        return await q
+            .order('updated_at', ascending: true)
+            .order('id', ascending: true)
+            .range(offset, offset + _pageSize - 1);
+      },
+      onPage: (rows) async {
+        for (final r in rows) {
+          final ts = r['updated_at'] as String?;
+          if (ts != null &&
+              (maxTs == null ||
+                  DateTime.parse(ts).isAfter(DateTime.parse(maxTs!)))) {
+            maxTs = ts;
+          }
         }
-      }
+        if (await _applyServerRows(t, rows) > 0) changed = true;
+      },
+    );
 
-      if (await _applyServerRows(t, rows) > 0) changed = true;
-
-      if (rows.length < _pageSize) break;
-      offset += _pageSize;
-    }
-
+    // المؤشر يتقدم فقط بعد نجاح سحب كل الصفحات
     if (maxTs != null) {
-      await LocalDatabase.instance.setMeta(metaKey, maxTs);
+      await LocalDatabase.instance.setMeta(metaKey, maxTs!);
     }
     return changed;
   }
@@ -390,7 +459,7 @@ class SyncService {
 
         await txn.insert(
           t.name,
-          _fromServer(t, r),
+          SyncCodec.fromServer(t, r),
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
         changed++;
