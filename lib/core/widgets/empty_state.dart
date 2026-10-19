@@ -31,6 +31,8 @@ class EmptyState extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
               textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
             ),
             if (subtitle != null) ...[
               const SizedBox(height: 8),

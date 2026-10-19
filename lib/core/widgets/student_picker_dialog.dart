@@ -16,76 +16,83 @@ Future<List<StudentModel>?> showStudentPickerDialog(
   BuildContext context, {
   required List<StudentModel> students,
 }) async {
-  return showDialog<List<StudentModel>>(
-    context: context,
-    builder: (ctx) {
-      final selected = <StudentModel>{};
-      var query = '';
+  final queryController = TextEditingController();
 
-      return StatefulBuilder(
-        builder: (ctx, setLocal) {
-          final visible =
-              students.where((s) => studentMatchesQuery(s, query)).toList();
-          return AlertDialog(
-            title: const Text('اختر الطلاب'),
-            content: SizedBox(
-              width: double.maxFinite,
-              height: 400,
-              child: Column(
-                children: [
-                  TextField(
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: 'ابحث بالاسم أو الرقم',
-                      isDense: true,
+  try {
+    return await showDialog<List<StudentModel>>(
+      context: context,
+      builder: (ctx) {
+        final selected = <StudentModel>{};
+
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final query = queryController.text;
+            final visible =
+                students.where((s) => studentMatchesQuery(s, query)).toList();
+            return AlertDialog(
+              title: const Text('اختر الطلاب'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 400,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: queryController,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.search),
+                        hintText: 'ابحث بالاسم أو الرقم',
+                        isDense: true,
+                      ),
+                      onChanged: (_) => setLocal(() {}),
                     ),
-                    onChanged: (v) => setLocal(() => query = v),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: visible.isEmpty
-                        ? const Center(child: Text('لا توجد نتائج'))
-                        : ListView.builder(
-                            itemCount: visible.length,
-                            itemBuilder: (ctx, i) {
-                              final s = visible[i];
-                              return CheckboxListTile(
-                                title: Text(s.fullName),
-                                subtitle: s.studentCode != null
-                                    ? Text('الرقم: ${s.studentCode}')
-                                    : null,
-                                value: selected.contains(s),
-                                onChanged: (v) {
-                                  setLocal(() {
-                                    if (v == true) {
-                                      selected.add(s);
-                                    } else {
-                                      selected.remove(s);
-                                    }
-                                  });
-                                },
-                              );
-                            },
-                          ),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: visible.isEmpty
+                          ? const Center(child: Text('لا توجد نتائج'))
+                          : ListView.builder(
+                              itemCount: visible.length,
+                              itemBuilder: (ctx, i) {
+                                final s = visible[i];
+                                return CheckboxListTile(
+                                  title: Text(s.fullName),
+                                  subtitle: s.studentCode != null
+                                      ? Text('الرقم: ${s.studentCode}')
+                                      : null,
+                                  value: selected.contains(s),
+                                  onChanged: (v) {
+                                    setLocal(() {
+                                      if (v == true) {
+                                        selected.add(s);
+                                      } else {
+                                        selected.remove(s);
+                                      }
+                                    });
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx, <StudentModel>[]),
-                child: const Text('إلغاء'),
-              ),
-              ElevatedButton(
-                onPressed: selected.isEmpty
-                    ? null
-                    : () => Navigator.pop(ctx, selected.toList()),
-                child: Text('إضافة ${selected.length}'),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, <StudentModel>[]),
+                  child: const Text('إلغاء'),
+                ),
+                ElevatedButton(
+                  onPressed: selected.isEmpty
+                      ? null
+                      : () => Navigator.pop(ctx, selected.toList()),
+                  child: Text('إضافة ${selected.length}'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  } finally {
+    queryController.dispose();
+  }
 }
