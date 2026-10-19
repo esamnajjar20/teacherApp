@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/supabase_client.dart';
 import '../../../../core/utils/auth_actions.dart';
+import 'change_password_screen.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../../shared/local/local_database.dart';
 import '../../../../shared/services/sync_service.dart';
@@ -82,68 +83,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _changePassword() async {
-    final pass = TextEditingController();
-    final confirm = TextEditingController();
-    String? err;
-
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('تغيير كلمة المرور'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: pass,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'كلمة المرور الجديدة'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: confirm,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: 'تأكيد كلمة المرور',
-                  errorText: err,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, false),
-                child: const Text('إلغاء')),
-            ElevatedButton(
-              onPressed: () {
-                if (pass.text.length < 6) {
-                  setLocal(() => err = 'ست خانات على الأقل');
-                  return;
-                }
-                if (pass.text != confirm.text) {
-                  setLocal(() => err = 'غير متطابقتين');
-                  return;
-                }
-                Navigator.pop(ctx, true);
-              },
-              child: const Text('حفظ'),
-            ),
-          ],
-        ),
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ChangePasswordScreen(),
       ),
     );
-
-    final newPassword = pass.text;
-    if (ok != true) return;
-
-    setState(() => _busy = true);
-    try {
-      await supabase.auth.updateUser(UserAttributes(password: newPassword));
+    if (changed == true && mounted) {
       _snack('تم تغيير كلمة المرور');
-    } catch (e) {
-      _snack(friendlyError(e), error: true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 

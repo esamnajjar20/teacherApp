@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../../../../core/constants/supabase_client.dart';
-import 'otp_screen.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../students/presentation/screens/home_screen.dart';
 
@@ -50,16 +49,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
 
       if (response.session != null) {
-        // إذا كانت الجلسة موجودة، يعني التأكيد معطّل، ندخل مباشرة
+        // إنشاء الحساب + دخول مباشر
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const HomeScreen()),
           (route) => false,
         );
       } else {
-        // التأكيد مفعّل: ننتقل لشاشة إدخال الرمز
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => OtpScreen(email: email)),
-        );
+        // لا جلسة → تأكيد البريد مفعّل في السيرفر (حالة غير متوقعة)
+        setState(() => _errorMessage =
+            'تعذّر إكمال التسجيل. يرجى التواصل مع الإدارة لتفعيل الحساب.');
       }
     } catch (e) {
       if (!mounted) return;

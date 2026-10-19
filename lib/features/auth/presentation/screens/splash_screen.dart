@@ -22,7 +22,15 @@ class _SplashScreenState extends State<SplashScreen> {
 
     if (!mounted) return;
 
-    final session = supabase.auth.currentSession;
+    var session = supabase.auth.currentSession;
+    // تحقق من صلاحية الجلسة — إن كانت منتهية، جدّدها
+    if (session != null) {
+      try {
+        session = await supabase.auth.refreshSession();
+      } catch (_) {
+        session = null;
+      }
+    }
     if (session != null) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const HomeScreen()),

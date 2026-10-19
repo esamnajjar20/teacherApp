@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/supabase_client.dart';
-import 'forgot_password_screen.dart';
-import 'otp_screen.dart';
 import 'register_screen.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../students/presentation/screens/home_screen.dart';
@@ -49,18 +47,6 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      // حساب لم يُؤكَّد بريده: نفتح شاشة الرمز ونرسل رمزاً جديداً
-      if (e is AuthException && e.message.contains('Email not confirmed')) {
-        Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => OtpScreen(
-              email: _emailController.text.trim(),
-              sendCodeOnOpen: true,
-            ),
-          ),
-        );
-        return;
-      }
       setState(() => _errorMessage = friendlyError(e));
     } finally {
       if (mounted) {
@@ -169,23 +155,6 @@ class _LoginScreenState extends State<LoginScreen> {
                       return null;
                     },
                   ),
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: TextButton(
-                      onPressed: _isLoading
-                          ? null
-                          : () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ForgotPasswordScreen(
-                                    initialEmail: _emailController.text.trim(),
-                                  ),
-                                ),
-                              ),
-                      child: const Text('نسيت كلمة المرور؟'),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
                   ElevatedButton(
                     onPressed: _isLoading ? null : _signIn,
                     child: _isLoading
