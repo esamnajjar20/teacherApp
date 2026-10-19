@@ -25,9 +25,20 @@ double? parseNumber(String input) {
   return value;
 }
 
-/// يعرض الرقم بدون ".0" الزائدة (20.0 → 20 ، 17.5 → 17.5).
+/// يعرض الرقم بشكل مختصر وآمن:
+/// - 20.0 → "20"
+/// - 17.5 → "17.5"
+/// - 17.333333333 → "17.33"   (بحد أقصى منزلتين عشريتين)
+/// - 0.1 + 0.2 → "0.3"        (يتجنب floating point artifacts)
 String formatNumber(num value) {
   final d = value.toDouble();
+  if (!d.isFinite) return d.toString();
   if (d == d.roundToDouble()) return d.toInt().toString();
-  return d.toString();
+
+  // نقرّب لخانتين عشريتين ثم نزيل الأصفار الزائدة
+  var s = d.toStringAsFixed(2);
+  if (s.endsWith('0')) s = s.substring(0, s.length - 1);
+  if (s.endsWith('0')) s = s.substring(0, s.length - 1);
+  if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+  return s;
 }

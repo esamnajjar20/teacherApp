@@ -12,6 +12,8 @@ enum _SignOutChoice { cancel, syncFirst, signOut }
 /// هذه هي النقطة الوحيدة لتسجيل الخروج في التطبيق.
 Future<void> confirmAndSignOut(BuildContext context) async {
   final messenger = ScaffoldMessenger.of(context);
+  const maxSyncAttempts = 3;
+  var syncAttempts = 0;
 
   while (true) {
     if (!context.mounted) return;
@@ -55,6 +57,18 @@ Future<void> confirmAndSignOut(BuildContext context) async {
 
     // مزامنة ثم نعيد السؤال إن بقي شيء لم يُرفع
     if (!context.mounted) return;
+
+    syncAttempts++;
+    if (syncAttempts > maxSyncAttempts) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('تعذّرت المزامنة. تحقق من الاتصال ثم أعد المحاولة.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      break;
+    }
+
     showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -68,7 +82,9 @@ Future<void> confirmAndSignOut(BuildContext context) async {
       break;
     }
     final err = SyncService.instance.status.value.error;
-    if (err != null) messenger.showSnackBar(SnackBar(content: Text(err)));
+    messenger.showSnackBar(SnackBar(
+      content: Text(err ?? 'تعذّرت المزامنة، حاول مرة أخرى'),
+    ));
   }
 
   try {

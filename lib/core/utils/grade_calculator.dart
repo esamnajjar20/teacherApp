@@ -28,24 +28,7 @@ class GradeCalculator {
         items.add((assessment: a, grade: g));
       }
 
-      double totalWeighted = 0;
-      double totalWeight = 0;
-      for (final item in items) {
-        final assessment = item.assessment;
-        final grade = item.grade;
-        if (grade?.rawScore == null) {
-          if (policy == 'zero') totalWeight += assessment.weight;
-          continue;
-        }
-        final weighted =
-            grade!.weightedScore(assessment.maxScore, assessment.weight);
-        if (weighted != null) {
-          totalWeighted += weighted;
-          totalWeight += assessment.weight;
-        }
-      }
-
-      final avg = totalWeight == 0 ? null : (totalWeighted / totalWeight * 100);
+      final avg = calculateFinalAverage(items: items, policy: policy);
       final letter = avg == null ? null : getLetterGrade(avg, scale);
       list.add(StudentResult(studentId: id, average: avg, letter: letter));
     }
@@ -101,19 +84,24 @@ class GradeCalculator {
     return totalWeighted / totalWeight * 100; // نرجّع نسبة من 100
   }
 
-  /// تحويل النسبة إلى تقدير حسب السلم
+  /// تحويل النسبة إلى تقدير حسب السلم.
+  /// يتعامل بأمان مع مدخلات تالفة (min = null، grade = null، scale فارغ).
   static String? getLetterGrade(
     double percentage,
     List<Map<String, dynamic>> scale,
   ) {
-    // scale مثال: [{"min": 90, "grade": "A"}, {"min": 80, "grade": "B"}, ...]
-    final sorted = List<Map<String, dynamic>>.from(scale)
-      ..sort((a, b) => (b['min'] as num).compareTo(a['min'] as num));
+    final valid = <MapEntry<num, String?>>[];
+    for (final entry in scale) {
+      final minVal = entry['min'];
+      if (minVal is! num) continue;
+      final gradeVal = entry['grade'];
+      valid.add(MapEntry(minVal, gradeVal is String ? gradeVal : null));
+    }
+    if (valid.isEmpty) return null;
 
-    for (final entry in sorted) {
-      if (percentage >= (entry['min'] as num)) {
-        return entry['grade'] as String?;
-      }
+    valid.sort((a, b) => b.key.compareTo(a.key));
+    for (final e in valid) {
+      if (percentage >= e.key) return e.value;
     }
     return null;
   }
