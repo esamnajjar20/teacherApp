@@ -36,6 +36,20 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
   /// هل هناك تعديلات لم تُحفظ بعد؟
   bool _dirty = false;
 
+  /// نص البحث في قائمة الطلاب
+  final _searchCtrl = TextEditingController();
+  String _search = '';
+
+  /// الطلاب الغائبون في آخر جلسة (للإشارة)
+  Set<String> _absentLastSession = {};
+
+  /// نص البحث في قائمة الطلاب
+  final _searchCtrl = TextEditingController();
+  String _search = '';
+
+  /// الطلاب الغائبون في آخر جلسة (للإشارة)
+  Set<String> _absentLastSession = {};
+
   @override
   void initState() {
     super.initState();
@@ -258,6 +272,115 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
     }
   }
 
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  /// نسخ حضور آخر جلسة على هذا التاريخ
+  Future<void> _copyLastSession() async {
+    try {
+      final sessions = await _db.getSessionsForClass(widget.classModel.id);
+      // استبعاد الجلسة الحالية (إن وُجدت)
+      final currentSession = await _db.findSession(
+        classId: widget.classModel.id,
+        date: _selectedDate,
+      );
+      final previous = sessions.where((s) => s.id != currentSession?.id).toList();
+
+      if (previous.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('لا توجد جلسة سابقة لنسخها'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final lastSession = previous.first;
+      final records = await _db.getRecordsForSession(lastSession.id);
+
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('نسخ من آخر جلسة'),
+          content: Text(
+            'سيُنسخ حضور جلسة ${lastSession.date.year}/'
+            '${lastSession.date.month.toString().padLeft(2, '0')}/'
+            '${lastSession.date.day.toString().padLeft(2, '0')} '
+            '(${records.length} سجل).
+
+'
+            'ستُستبدل الحالات الحالية. هل تريد المتابعة؟',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('نسخ'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true || !mounted) return;
+
+      setState(() {
+        _resetToDefault();
+        for (final r in records) {
+          if (_statusMap.containsKey(r.studentId)) {
+            _statusMap[r.studentId] = r.status;
+          }
+        }
+        _dirty = true;
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم نسخ الحضور — راجع ثم اضغط حفظ'),
+          backgroundColor: Colors.blue,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// تحميل الغائبين من آخر جلسة (لإظهار شارة بجانب الطالب)
+  Future<void> _loadAbsentLastSession() async {
+    try {
+      final sessions = await _db.getSessionsForClass(widget.classModel.id);
+      if (sessions.isEmpty) return;
+
+      final currentSession = await _db.findSession(
+        classId: widget.classModel.id,
+        date: _selectedDate,
+      );
+      final previous = sessions.where((s) => s.id != currentSession?.id).toList();
+      if (previous.isEmpty) return;
+
+      final records = await _db.getRecordsForSession(previous.first.id);
+      if (!mounted) return;
+      setState(() {
+        _absentLastSession = records
+            .where((r) => r.status == AppConstants.absent)
+            .map((r) => r.studentId)
+            .toSet();
+      });
+    } catch (_) {}
+  }
+
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
       context: context,
@@ -300,6 +423,24 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
         appBar: AppBar(
           title: const Text('تسجيل الحضور'),
           actions: [
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              onSelected: (value) {
+                if (value == 'copy') _copyLastSession();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: 'copy',
+                  child: Row(
+                    children: [
+                      Icon(Icons.copy_all_outlined, size: 20),
+                      SizedBox(width: 8),
+                      Text('نسخ من آخر جلسة'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
             TextButton(
               onPressed: (_isSaving || _isLoadingExisting) ? null : _save,
               child: _isSaving
@@ -351,8 +492,9 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 8,
                     children: [
                       TextButton.icon(
                         onPressed: widget.students.isEmpty
@@ -362,7 +504,6 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
                             color: Colors.green, size: 18),
                         label: const Text('الكل حاضر'),
                       ),
-                      const SizedBox(width: 8),
                       TextButton.icon(
                         onPressed: widget.students.isEmpty
                             ? null
@@ -371,21 +512,66 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
                             color: Colors.red, size: 18),
                         label: const Text('الكل غائب'),
                       ),
+                      TextButton.icon(
+                        onPressed: widget.students.isEmpty
+                            ? null
+                            : () => _setAll(AppConstants.late),
+                        icon: const Icon(Icons.access_time,
+                            color: Colors.orange, size: 18),
+                        label: const Text('الكل متأخر'),
+                      ),
                     ],
                   ),
                 ],
               ),
             ),
             if (_isLoadingExisting) const LinearProgressIndicator(minHeight: 2),
+            // حقل البحث
+            if (widget.students.length > 5)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: TextField(
+                  controller: _searchCtrl,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: 'ابحث باسم الطالب...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _search.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.clear, size: 20),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() => _search = '');
+                            },
+                          ),
+                  ),
+                  onChanged: (v) => setState(() => _search = v.trim()),
+                ),
+              ),
             // قائمة الطلاب
             Expanded(
               child: widget.students.isEmpty
                   ? const Center(child: Text('لا يوجد طلاب في الفصل'))
-                  : ListView.builder(
-                      itemCount: widget.students.length,
+                  : Builder(
+                      builder: (context) {
+                        final filtered = _search.isEmpty
+                            ? widget.students
+                            : widget.students
+                                .where((s) => s.fullName
+                                    .toLowerCase()
+                                    .contains(_search.toLowerCase()))
+                                .toList();
+                        if (filtered.isEmpty) {
+                          return const Center(
+                              child: Text('لا توجد نتائج مطابقة'));
+                        }
+                        return ListView.builder(
+                      itemCount: filtered.length,
                       itemBuilder: (context, index) {
-                        final student = widget.students[index];
+                        final student = filtered[index];
                         final status = _statusMap[student.id] ?? AppConstants.present;
+                        final wasAbsent = _absentLastSession.contains(student.id);
                         return ListTile(
                           leading: CircleAvatar(
                             backgroundColor: _statusColor(status).soft(0.15),
@@ -402,13 +588,35 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
                             AppConstants.attendanceStatusLabels[status] ?? status,
                             style: TextStyle(color: _statusColor(status)),
                           ),
-                          trailing: Icon(
-                            Icons.touch_app,
-                            color: Colors.grey[400],
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (wasAbsent)
+                                Container(
+                                  margin: const EdgeInsets.only(left: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Text(
+                                    'غاب سابقاً',
+                                    style: TextStyle(
+                                        fontSize: 10, color: Colors.red),
+                                  ),
+                                ),
+                              Icon(
+                                Icons.touch_app,
+                                color: Colors.grey[400],
+                              ),
+                            ],
                           ),
                           onTap: () => _cycleStatus(student.id),
                           onLongPress: () => _pickStatus(student),
                         );
+                      },
+                    );
                       },
                     ),
             ),
