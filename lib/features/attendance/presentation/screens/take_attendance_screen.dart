@@ -43,13 +43,6 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
   /// الطلاب الغائبون في آخر جلسة (للإشارة)
   Set<String> _absentLastSession = {};
 
-  /// نص البحث في قائمة الطلاب
-  final _searchCtrl = TextEditingController();
-  String _search = '';
-
-  /// الطلاب الغائبون في آخر جلسة (للإشارة)
-  Set<String> _absentLastSession = {};
-
   @override
   void initState() {
     super.initState();
@@ -309,13 +302,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
         builder: (ctx) => AlertDialog(
           title: const Text('نسخ من آخر جلسة'),
           content: Text(
-            'سيُنسخ حضور جلسة ${lastSession.date.year}/'
-            '${lastSession.date.month.toString().padLeft(2, '0')}/'
-            '${lastSession.date.day.toString().padLeft(2, '0')} '
-            '(${records.length} سجل).
-
-'
-            'ستُستبدل الحالات الحالية. هل تريد المتابعة؟',
+            'سيُنسخ حضور جلسة ${lastSession.date.year}/${lastSession.date.month.toString().padLeft(2, '0')}/${lastSession.date.day.toString().padLeft(2, '0')} (${records.length} سجل). ستُستبدل الحالات الحالية. هل تريد المتابعة؟',,
           ),
           actions: [
             TextButton(

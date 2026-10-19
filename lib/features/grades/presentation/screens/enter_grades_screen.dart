@@ -31,10 +31,6 @@ class _EnterGradesScreenState extends State<EnterGradesScreen> {
   final _searchCtrl = TextEditingController();
   String _search = '';
 
-  /// نص البحث
-  final _searchCtrl = TextEditingController();
-  String _search = '';
-
   @override
   void initState() {
     super.initState();
