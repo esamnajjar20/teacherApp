@@ -1,22 +1,32 @@
+import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// يحوّل أي استثناء إلى رسالة عربية مفهومة للمستخدم.
 String friendlyError(Object error) {
+  if (error is TimeoutException) {
+    return 'انتهت مهلة الاتصال، تحقق من الشبكة';
+  }
+
   if (error is AuthException) {
     final m = error.message;
+    // rate limit أولاً — أهم من تفاصيل أخرى
+    if (error.statusCode == '429' ||
+        m.toLowerCase().contains('rate limit') ||
+        m.contains('you can only request this after')) {
+      return 'طلبات كثيرة، انتظر دقيقة ثم حاول';
+    }
     if (m.contains('Invalid login credentials')) {
       return 'البريد أو كلمة المرور غير صحيحة';
     }
     if (m.contains('Email not confirmed')) {
       return 'يرجى تأكيد بريدك الإلكتروني أولاً';
     }
-    if (error.statusCode == '429' ||
-        m.toLowerCase().contains('rate limit') ||
-        m.contains('you can only request this after')) {
-      return 'انتظر قليلاً قبل طلب رمز جديد';
-    }
-    if (m.contains('already registered')) {
+    if (m.contains('already registered') ||
+        m.contains('already exists')) {
       return 'هذا البريد مسجّل مسبقاً';
+    }
+    if (m.contains('Password should be')) {
+      return 'كلمة المرور ضعيفة، اختر واحدة أقوى';
     }
     return m;
   }

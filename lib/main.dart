@@ -29,12 +29,17 @@ Future<void> main() async {
   // عند انتهاء الجلسة أو تسجيل الخروج → العودة لشاشة الدخول
   Supabase.instance.client.auth.onAuthStateChange.listen((data) {
     if (data.event == AuthChangeEvent.signedOut) {
-      SyncService.instance.stop();
-      LocalDatabase.instance.close();
-      navigatorKey.currentState?.pushNamedAndRemoveUntil(
-        '/login',
-        (route) => false,
-      );
+      // نغلق الموارد أولاً ثم نتنقل (fire-and-forget مع ترتيب صحيح)
+      Future(() async {
+        try {
+          await SyncService.instance.stop();
+          await LocalDatabase.instance.close();
+        } catch (_) {}
+        final nav = navigatorKey.currentState;
+        if (nav != null && nav.mounted) {
+          nav.pushNamedAndRemoveUntil('/login', (route) => false);
+        }
+      });
     }
   });
 
@@ -74,16 +79,17 @@ class _MissingConfigApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      locale: Locale('ar'),
-      supportedLocales: [Locale('ar')],
-      localizationsDelegates: [
+      theme: AppTheme.lightTheme,
+      locale: const Locale('ar'),
+      supportedLocales: const [Locale('ar')],
+      localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      home: Scaffold(
+      home: const Scaffold(
         body: Center(
           child: Padding(
             padding: EdgeInsets.all(24),

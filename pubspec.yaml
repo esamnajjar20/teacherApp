@@ -49,5 +49,5 @@ flutter_launcher_icons:
 
 flutter:
   uses-material-design: true
-  assets:
-    # خط Cairo المضمَّن (انظر assets/google_fonts/README.md)
+  # ملاحظة: خط Cairo من google_fonts (يُحمّل عند أول اتصال ثم يُخزَّن)
+  # لا يوجد assets محلية مضمّنة حالياً
