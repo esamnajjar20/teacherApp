@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/attendance_calculator.dart';
 import '../../../../core/widgets/confirm_dialog.dart';
 import '../../../../core/widgets/student_picker_dialog.dart';
 import '../../../../core/widgets/sync_refresh_mixin.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/student_model.dart';
 import '../../../../shared/services/database_service.dart';
+import '../../../../core/utils/color_utils.dart';
 import '../../../attendance/presentation/screens/attendance_history_screen.dart';
 import '../../../attendance/presentation/screens/take_attendance_screen.dart';
 import '../../../grades/presentation/screens/assessments_screen.dart';
@@ -29,6 +31,12 @@ class _ClassDetailScreenState extends State<ClassDetailScreen>
   List<StudentModel> _allStudents = [];
   bool _isLoading = true;
 
+  // إحصائيات
+  int _sessionsCount = 0;
+  double? _avgAttendance;
+  int _atRiskCount = 0;
+  List<({String name, double? percentage})> _atRiskStudents = [];
+
   @override
   void initState() {
     super.initState();
@@ -43,10 +51,44 @@ class _ClassDetailScreenState extends State<ClassDetailScreen>
     try {
       final enrolled = await _db.getStudentsInClass(widget.classModel.id);
       final all = await _db.getStudents();
+      
+      // جلب الإحصائيات
+      final sessions = await _db.getSessionSummaries(widget.classModel.id);
+      double? avgAtt;
+      int atRisk = 0;
+      List<({String name, double? percentage})> atRiskList = [];
+      
+      if (sessions.isNotEmpty && enrolled.isNotEmpty) {
+        final sessionIds = sessions.take(50).map((s) => s.session.id).toList();
+        final records = await _db.getRecordsForSessions(sessionIds);
+        final stats = AttendanceCalculator.summarize(
+          studentIds: enrolled.map((s) => s.id).toList(),
+          records: records
+              .map((r) => (studentId: r.studentId, status: r.status)),
+        );
+        avgAtt = AttendanceCalculator.classAverage(stats);
+        final risk =
+            stats.where((s) => AttendanceCalculator.isBelowThreshold(s.percentage)).toList();
+        atRisk = risk.length;
+        final nameById = {for (final s in enrolled) s.id: s.fullName};
+        atRiskList = risk
+            .map((s) => (
+                  name: nameById[s.studentId] ?? '',
+                  percentage: s.percentage,
+                ))
+            .toList()
+          ..sort((a, b) =>
+              (a.percentage ?? 100).compareTo(b.percentage ?? 100));
+      }
+      
       if (!mounted) return;
       setState(() {
         _enrolled = enrolled;
         _allStudents = all;
+        _sessionsCount = sessions.length;
+        _avgAttendance = avgAtt;
+        _atRiskCount = atRisk;
+        _atRiskStudents = atRiskList;
         _isLoading = false;
       });
     } catch (e) {
@@ -193,6 +235,194 @@ class _ClassDetailScreenState extends State<ClassDetailScreen>
                     ],
                   ),
                 ),
+                // ===== إحصائيات الفصل =====
+                if (_sessionsCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _statCard(
+                            'الطلاب',
+                            '${_enrolled.length}',
+                            Colors.blue,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _statCard(
+                            'الحصص',
+                            '$_sessionsCount',
+                            Colors.purple,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _statCard(
+                            'متوسط الحضور',
+                            _avgAttendance == null
+                                ? '-'
+                                : '${_avgAttendance!.toStringAsFixed(0)}%',
+                            (_avgAttendance ?? 100) >= 75
+                                ? Colors.green
+                                : Colors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // ===== تنبيه الطلاب المعرضين للخطر =====
+                if (_atRiskStudents.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded,
+                                  color: Colors.red.shade700, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '$_atRiskCount طالب بحضور منخفض (أقل من 75%)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red.shade800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          for (final s in _atRiskStudents.take(5))
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Text(
+                                '• ${s.name} — ${s.percentage?.toStringAsFixed(0) ?? '-'}%',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.red.shade900,
+                                ),
+                              ),
+                            ),
+                          if (_atRiskStudents.length > 5)
+                            Text(
+                              '... و${_atRiskStudents.length - 5} آخرين',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.red.shade700,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // ===== الأزرار =====
+                // ===== إحصائيات الفصل =====
+                if (_sessionsCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _statCard(
+                            'الطلاب',
+                            '${_enrolled.length}',
+                            Colors.blue,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _statCard(
+                            'الحصص',
+                            '$_sessionsCount',
+                            Colors.purple,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _statCard(
+                            'متوسط الحضور',
+                            _avgAttendance == null
+                                ? '-'
+                                : '${_avgAttendance!.toStringAsFixed(0)}%',
+                            (_avgAttendance ?? 100) >= 75
+                                ? Colors.green
+                                : Colors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // ===== تنبيه الطلاب المعرضين للخطر =====
+                if (_atRiskStudents.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.red.shade200),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded,
+                                  color: Colors.red.shade700, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  '$_atRiskCount طالب بحضور منخفض (أقل من 75%)',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.red.shade800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          for (final s in _atRiskStudents.take(5))
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Text(
+                                '• ${s.name} — ${s.percentage?.toStringAsFixed(0) ?? '-'}%',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: Colors.red.shade900,
+                                ),
+                              ),
+                            ),
+                          if (_atRiskStudents.length > 5)
+                            Text(
+                              '... و${_atRiskStudents.length - 5} آخرين',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.red.shade700,
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // ===== الأزرار =====
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: SizedBox(

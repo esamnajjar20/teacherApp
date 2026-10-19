@@ -1,6 +1,8 @@
+import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/excel_share.dart';
 import '../../../../core/utils/grade_calculator.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
@@ -89,10 +91,82 @@ class _ClassResultsScreenState extends State<ClassResultsScreen>
     }
   }
 
+  Future<void> _exportExcel() async {
+    if (_rows.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد نتائج لتصديرها')),
+      );
+      return;
+    }
+    try {
+      final excel = Excel.createExcel();
+      const sheetName = 'نتائج الفصل';
+      excel.rename(excel.getDefaultSheet() ?? 'Sheet1', sheetName);
+      final sheet = excel[sheetName];
+      sheet.isRTL = true;
+
+      sheet.appendRow([
+        TextCellValue('نتائج فصل: ${widget.classModel.name}'),
+      ]);
+      if (widget.classModel.subject != null) {
+        sheet.appendRow([TextCellValue('المادة: ${widget.classModel.subject}')]);
+      }
+      sheet.appendRow([]);
+
+      sheet.appendRow([
+        TextCellValue('الترتيب'),
+        TextCellValue('الطالب'),
+        TextCellValue('المعدل (%)'),
+        TextCellValue('التقدير'),
+      ]);
+
+      for (final r in _rows) {
+        sheet.appendRow([
+          r.rank != null ? IntCellValue(r.rank!) : TextCellValue('-'),
+          TextCellValue(r.name),
+          r.average != null
+              ? DoubleCellValue(double.parse(r.average!.toStringAsFixed(2)))
+              : TextCellValue('-'),
+          TextCellValue(r.letter ?? '-'),
+        ]);
+      }
+
+      await shareExcel(
+        excel,
+        baseName: 'results_${widget.classModel.name}',
+        text: 'نتائج ${widget.classModel.name}',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('تم تجهيز الملف'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('خطأ في التصدير: ${friendlyError(e)}'),
+              backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('نتائج ${widget.classModel.name}')),
+      appBar: AppBar(
+        title: Text('نتائج ${widget.classModel.name}'),
+        actions: [
+          IconButton(
+            tooltip: 'تصدير Excel',
+            icon: const Icon(Icons.ios_share),
+            onPressed: _isLoading || _rows.isEmpty ? null : _exportExcel,
+          ),
+        ],
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _error != null

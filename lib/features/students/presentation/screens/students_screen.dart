@@ -1,7 +1,9 @@
+import 'package:excel/excel.dart';
 import 'package:flutter/material.dart';
 import 'package:teacher_app/core/utils/color_utils.dart';
 
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/utils/excel_share.dart';
 import '../../../../core/widgets/confirm_dialog.dart';
 import '../../../../core/widgets/student_form_dialog.dart';
 import '../../../../core/widgets/student_picker_dialog.dart'
@@ -150,6 +152,70 @@ class _StudentsScreenState extends State<StudentsScreen> with SyncRefreshMixin {
     }
   }
 
+  Future<void> _exportExcel() async {
+    if (_students.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا يوجد طلاب لتصديرهم')),
+      );
+      return;
+    }
+    try {
+      final excel = Excel.createExcel();
+      const sheetName = 'قائمة الطلاب';
+      excel.rename(excel.getDefaultSheet() ?? 'Sheet1', sheetName);
+      final sheet = excel[sheetName];
+      sheet.isRTL = true;
+
+      sheet.appendRow([
+        TextCellValue('قائمة الطلاب (${_students.length} طالب)'),
+      ]);
+      sheet.appendRow([
+        TextCellValue('تاريخ التصدير: ${DateTime.now().toLocal()}'),
+      ]);
+      sheet.appendRow([]);
+      sheet.appendRow([
+        TextCellValue('#'),
+        TextCellValue('الاسم'),
+        TextCellValue('الرقم'),
+        TextCellValue('ولي الأمر'),
+      ]);
+
+      for (var i = 0; i < _students.length; i++) {
+        final s = _students[i];
+        sheet.appendRow([
+          IntCellValue(i + 1),
+          TextCellValue(s.fullName),
+          TextCellValue(s.studentCode ?? ''),
+          TextCellValue(s.parentPhone ?? ''),
+        ]);
+      }
+
+      await shareExcel(
+        excel,
+        baseName: 'students_list',
+        text: 'قائمة الطلاب',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم تجهيز الملف'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('خطأ في التصدير: ${friendlyError(e)}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   void _openProfile(StudentModel student) {
     Navigator.push(
       context,
@@ -232,6 +298,16 @@ class _StudentsScreenState extends State<StudentsScreen> with SyncRefreshMixin {
                         tooltip: 'إضافة عدة طلاب / استيراد من Excel',
                         icon: const Icon(Icons.group_add),
                         onPressed: _addMany,
+                      ),
+                      IconButton(
+                        tooltip: 'تصدير القائمة (Excel)',
+                        icon: const Icon(Icons.file_upload_outlined),
+                        onPressed: _students.isEmpty ? null : _exportExcel,
+                      ),
+                      IconButton(
+                        tooltip: 'تصدير القائمة (Excel)',
+                        icon: const Icon(Icons.file_upload_outlined),
+                        onPressed: _students.isEmpty ? null : _exportExcel,
                       ),
                     ],
                   ),

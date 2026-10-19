@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../../core/constants/app_constants.dart';
 import '../../../../core/constants/supabase_client.dart';
 import '../../../../core/utils/auth_actions.dart';
+import '../../../../shared/services/database_service.dart';
 import '../../../../shared/services/sync_service.dart';
 import '../../../attendance/presentation/screens/attendance_list_screen.dart';
 import '../../../auth/presentation/screens/profile_screen.dart';
@@ -21,11 +22,69 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+  final _db = DatabaseService();
+  int _classesWithoutAttendance = 0;
 
   @override
   void initState() {
     super.initState();
     SyncService.instance.start();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    try {
+      final classes = await _db.getClasses();
+      final today = DateTime.now();
+      var count = 0;
+      for (final c in classes) {
+        final session = await _db.findSession(classId: c.id, date: today);
+        if (session == null) count++;
+      }
+      if (mounted) setState(() => _classesWithoutAttendance = count);
+    } catch (_) {}
+  }
+
+  Widget _buildDashboardBanner() {
+    if (_classesWithoutAttendance == 0) return const SizedBox.shrink();
+    final n = _classesWithoutAttendance;
+    return Material(
+      color: Colors.orange.shade50,
+      child: InkWell(
+        onTap: () {
+          setState(() => _currentIndex = 2); // تبويب الحضور
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  n == 1
+                      ? 'فصل واحد بدون حضور اليوم'
+                      : '$n فصول بدون حضور اليوم',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange.shade900,
+                  ),
+                ),
+              ),
+              Text(
+                'سجّل الآن',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange.shade900,
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios,
+                  size: 14, color: Colors.orange),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _syncButton() {
@@ -109,13 +168,17 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      // كل تبويب يحدّث بياناته بصمت عند وصول تغييرات من السيرفر
-      // (SyncRefreshMixin)، فلا يضيع نص البحث ولا موضع التمرير.
-      body: _screens[_currentIndex],
+      body: Column(
+        children: [
+          _buildDashboardBanner(),
+          Expanded(child: _screens[_currentIndex]),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
           setState(() => _currentIndex = index);
+          if (index == 0 || index == 2) _loadDashboard();
         },
         destinations: const [
           NavigationDestination(
