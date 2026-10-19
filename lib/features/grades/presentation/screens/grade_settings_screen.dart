@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/errors/error_message.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 
 class GradeSettingsScreen extends StatefulWidget {
   final ClassModel classModel;
@@ -12,7 +13,8 @@ class GradeSettingsScreen extends StatefulWidget {
   State<GradeSettingsScreen> createState() => _GradeSettingsScreenState();
 }
 
-class _GradeSettingsScreenState extends State<GradeSettingsScreen> {
+class _GradeSettingsScreenState extends State<GradeSettingsScreen>
+    with SyncRefreshMixin {
   final _db = DatabaseService();
   bool _isLoading = true;
   bool _isSaving = false;
@@ -24,7 +26,10 @@ class _GradeSettingsScreenState extends State<GradeSettingsScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  @override
+  Future<void> reloadSilently() => _load(silent: true);
+
+  Future<void> _load({bool silent = false}) async {
     try {
       final settings = await _db.getGradeSettings(widget.classModel.id);
       if (!mounted) return;
@@ -33,7 +38,7 @@ class _GradeSettingsScreenState extends State<GradeSettingsScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),

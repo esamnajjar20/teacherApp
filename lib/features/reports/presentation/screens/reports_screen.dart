@@ -9,6 +9,7 @@ import '../../../../shared/models/class_model.dart';
 import '../../../../shared/models/grade_model.dart';
 import '../../../../shared/services/database_service.dart';
 import '../../../attendance/presentation/screens/attendance_report_screen.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -17,7 +18,8 @@ class ReportsScreen extends StatefulWidget {
   State<ReportsScreen> createState() => _ReportsScreenState();
 }
 
-class _ReportsScreenState extends State<ReportsScreen> {
+class _ReportsScreenState extends State<ReportsScreen>
+    with SyncRefreshMixin {
   final _db = DatabaseService();
   List<ClassModel> _classes = [];
   ClassModel? _selectedClass;
@@ -30,7 +32,11 @@ class _ReportsScreenState extends State<ReportsScreen> {
     _loadClasses();
   }
 
-  Future<void> _loadClasses() async {
+  @override
+  Future<void> reloadSilently() => _loadClasses(silent: true);
+
+  Future<void> _loadClasses({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     try {
       final list = await _db.getClasses();
       if (!mounted) return;
@@ -39,7 +45,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() => _isLoading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),

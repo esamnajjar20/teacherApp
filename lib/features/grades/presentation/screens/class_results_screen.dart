@@ -4,6 +4,7 @@ import '../../../../core/errors/error_message.dart';
 import '../../../../core/utils/grade_calculator.dart';
 import '../../../../shared/models/class_model.dart';
 import '../../../../shared/services/database_service.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 
 class ClassResultsScreen extends StatefulWidget {
   final ClassModel classModel;
@@ -13,7 +14,8 @@ class ClassResultsScreen extends StatefulWidget {
   State<ClassResultsScreen> createState() => _ClassResultsScreenState();
 }
 
-class _ClassResultsScreenState extends State<ClassResultsScreen> {
+class _ClassResultsScreenState extends State<ClassResultsScreen>
+    with SyncRefreshMixin {
   final _db = DatabaseService();
   bool _isLoading = true;
   String? _error;
@@ -25,11 +27,16 @@ class _ClassResultsScreenState extends State<ClassResultsScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
+  @override
+  Future<void> reloadSilently() => _load(silent: true);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
     try {
       final students = await _db.getStudentsInClass(widget.classModel.id);
       final assessments = (await _db.getAssessments(widget.classModel.id))

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/errors/error_message.dart';
+import '../../../../core/widgets/confirm_dialog.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/sync_refresh_mixin.dart';
 import '../../../../shared/models/class_model.dart';
@@ -95,29 +96,15 @@ class _AttendanceHistoryScreenState extends State<AttendanceHistoryScreen>
   }
 
   Future<void> _delete(SessionSummary s) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('حذف جلسة الحضور'),
-        content: Text(
+    final confirm = await confirmDelete(
+      context,
+      title: 'حذف جلسة الحضور',
+      message:
           'سيُحذف حضور يوم ${_fmtDate(s.session.date)} (${s.total} طالب) '
           'ويختفي من التقارير ونسب الحضور.\n'
           'يمكنك تسجيل حضور ذلك اليوم من جديد لاحقاً.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('حذف'),
-          ),
-        ],
-      ),
     );
-    if (confirm != true || !mounted) return;
+    if (!confirm || !mounted) return;
     try {
       await _db.softDeleteSession(s.session.id);
       _load(silent: true);

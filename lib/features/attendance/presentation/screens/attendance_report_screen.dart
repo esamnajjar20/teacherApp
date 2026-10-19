@@ -178,7 +178,8 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
         TextCellValue('بعذر'),
         TextCellValue('نسبة الحضور (%)'),
       ]);
-      for (final st in _stats) {
+      // نستخدم نفس الترتيب المعروض في الواجهة (الأسوأ أولاً)
+      for (final st in _sortedStats) {
         final p = st.percentage;
         summary.appendRow([
           TextCellValue(byId[st.studentId]?.fullName ?? ''),

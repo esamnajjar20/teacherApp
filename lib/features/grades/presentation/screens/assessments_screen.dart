@@ -9,6 +9,7 @@ import '../../../../shared/services/database_service.dart';
 import 'enter_grades_screen.dart';
 import 'grade_settings_screen.dart';
 import 'package:teacher_app/core/utils/color_utils.dart';
+import '../../../../core/widgets/sync_refresh_mixin.dart';
 
 class AssessmentsScreen extends StatefulWidget {
   final ClassModel classModel;
@@ -24,7 +25,8 @@ class AssessmentsScreen extends StatefulWidget {
   State<AssessmentsScreen> createState() => _AssessmentsScreenState();
 }
 
-class _AssessmentsScreenState extends State<AssessmentsScreen> {
+class _AssessmentsScreenState extends State<AssessmentsScreen>
+    with SyncRefreshMixin {
   final _db = DatabaseService();
   List<AssessmentModel> _assessments = [];
   bool _isLoading = true;
@@ -35,8 +37,11 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() => _isLoading = true);
+  @override
+  Future<void> reloadSilently() => _load(silent: true);
+
+  Future<void> _load({bool silent = false}) async {
+    if (!silent) setState(() => _isLoading = true);
     try {
       final list = await _db.getAssessments(widget.classModel.id);
       if (!mounted) return;
@@ -45,7 +50,7 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
         _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || silent) return;
       setState(() => _isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -258,6 +263,10 @@ class _AssessmentsScreenState extends State<AssessmentsScreen> {
           SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
+    } finally {
+      nameCtrl.dispose();
+      weightCtrl.dispose();
+      maxCtrl.dispose();
     }
   }
 

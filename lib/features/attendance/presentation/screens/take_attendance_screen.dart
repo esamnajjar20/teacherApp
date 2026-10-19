@@ -171,7 +171,7 @@ class _TakeAttendanceScreenState extends State<TakeAttendanceScreen> {
 
   void _setAll(String status) {
     setState(() {
-      for (final id in _statusMap.keys.toList()) {
+      for (final id in _statusMap.keys) {
         _statusMap[id] = status;
       }
       _dirty = true;
