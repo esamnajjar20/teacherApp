@@ -114,6 +114,11 @@ class _ClassesScreenState extends State<ClassesScreen> with SyncRefreshMixin {
     final subject = subjectController.text.trim();
     final year = yearController.text.trim();
 
+    // نحرر الـ controllers فوراً بعد قراءة القيم
+    nameController.dispose();
+    subjectController.dispose();
+    yearController.dispose();
+
     if (result != true) return;
 
     try {

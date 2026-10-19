@@ -179,11 +179,16 @@ class _AssessmentsScreenState extends State<AssessmentsScreen>
       ),
     );
 
-    if (result != true || !mounted) return;
-
     final name = nameCtrl.text.trim();
     final weight = parseNumber(weightCtrl.text);
     final maxScore = parseNumber(maxCtrl.text);
+
+    // نحرر الـ controllers فوراً بعد قراءة القيم
+    nameCtrl.dispose();
+    weightCtrl.dispose();
+    maxCtrl.dispose();
+
+    if (result != true || !mounted) return;
 
     void showError(String msg) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -263,10 +268,6 @@ class _AssessmentsScreenState extends State<AssessmentsScreen>
           SnackBar(content: Text(friendlyError(e)), backgroundColor: Colors.red),
         );
       }
-    } finally {
-      nameCtrl.dispose();
-      weightCtrl.dispose();
-      maxCtrl.dispose();
     }
   }
 
