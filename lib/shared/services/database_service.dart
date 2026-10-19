@@ -930,9 +930,32 @@ class DatabaseService {
   }
 
   /// حذف جلسة حضور (soft delete). سجلاتها تختفي من كل التقارير تبعاً لها.
+  /// حذف جلسة حضور وسجلاتها (soft delete في transaction واحد).
+  /// السجلات تُعلَّم بحذف في نفس اللحظة حتى لا تتراكم بلا فائدة.
   Future<void> softDeleteSession(String id) async {
     final db = await _db;
-    await _update(db, 'attendance_sessions', {'deleted_at': _nowIso()},
+    final now = _nowIso();
+    await db.transaction((txn) async {
+      await _update(txn, 'attendance_sessions', {'deleted_at': now},
+          where: 'id=?', args: [id]);
+      await _update(txn, 'attendance_records', {'deleted_at': now},
+          where: 'session_id=?', args: [id]);
+    });
+    _changed();
+  }
+
+  /// تعديل ملاحظات جلسة أو حصتها. لا يغيّر التاريخ (لتجنب تصادم الجلسات).
+  Future<void> updateSession({
+    required String id,
+    String? period,
+    String? notes,
+  }) async {
+    final updates = <String, Object?>{};
+    if (period != null) updates['period'] = period;
+    if (notes != null) updates['notes'] = notes;
+    if (updates.isEmpty) return;
+    final db = await _db;
+    await _update(db, 'attendance_sessions', updates,
         where: 'id=?', args: [id]);
     _changed();
   }

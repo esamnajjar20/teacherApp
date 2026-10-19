@@ -534,11 +534,15 @@ class SyncService {
           if (other.isNotEmpty && other.first['dirty'] == 1) continue;
         }
 
-        await txn.insert(
-          t.name,
-          SyncCodec.fromServer(t, r),
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        // update بدل REPLACE: REPLACE = DELETE + INSERT، وقد يُفعّل
+        // CASCADE على FKs مستقبلية. update/insert آمن ومكافئ.
+        final rowData = SyncCodec.fromServer(t, r);
+        if (existing.isNotEmpty) {
+          await txn.update(t.name, rowData,
+              where: 'id=?', whereArgs: [id]);
+        } else {
+          await txn.insert(t.name, rowData);
+        }
         changed++;
       }
     });

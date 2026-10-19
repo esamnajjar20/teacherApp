@@ -1,3 +1,4 @@
+import '../../core/utils/safe_parse.dart';
 import 'package:equatable/equatable.dart';
 
 class StudentModel extends Equatable {
@@ -27,17 +28,15 @@ class StudentModel extends Equatable {
 
   factory StudentModel.fromJson(Map<String, dynamic> json) {
     return StudentModel(
-      id: json['id'] as String,
-      teacherId: json['teacher_id'] as String,
-      fullName: json['full_name'] as String,
-      studentCode: json['student_code'] as String?,
-      parentPhone: json['parent_phone'] as String?,
-      notes: json['notes'] as String?,
-      deletedAt: json['deleted_at'] != null
-          ? DateTime.parse(json['deleted_at'] as String)
-          : null,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      id: SafeParse.string(json['id']),
+      teacherId: SafeParse.string(json['teacher_id']),
+      fullName: SafeParse.string(json['full_name']),
+      studentCode: SafeParse.stringOrNull(json['student_code']),
+      parentPhone: SafeParse.stringOrNull(json['parent_phone']),
+      notes: SafeParse.stringOrNull(json['notes']),
+      deletedAt: SafeParse.dateTime(json['deleted_at']),
+      createdAt: SafeParse.dateTimeOrNow(json['created_at']),
+      updatedAt: SafeParse.dateTimeOrNow(json['updated_at']),
     );
   }
 

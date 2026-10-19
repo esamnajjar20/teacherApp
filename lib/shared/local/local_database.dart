@@ -248,14 +248,44 @@ class LocalDatabase {
         'attempts INTEGER NOT NULL, '
         'updated_at TEXT, '
         'next_attempt TEXT NOT NULL)');
-    try {
-      await db.execute(
-          'CREATE UNIQUE INDEX IF NOT EXISTS uq_students_teacher_code '
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_records_session '
+        'ON attendance_records(session_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_records_student '
+        'ON attendance_records(student_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_enroll_student '
+        'ON enrollments(student_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_grades_student '
+        'ON grades(student_id)');
+
+    
+      try {
+
+        await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_students_teacher_code '
           'ON students(teacher_id, student_code) '
           'WHERE student_code IS NOT NULL AND deleted_at IS NULL');
-    } catch (e) {
-      debugPrint('Could not create unique index on student_code: $e');
-    }
+
+      } catch (e) {
+
+        debugPrint('uq_students_teacher_code migration skipped: $e');
+
+        try {
+
+          await db.insert('sync_meta', {
+
+            'key': 'migration_warn_uq_students_code',
+
+            'value': e.toString(),
+
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+        } catch (_) {}
+
+      }
+    
   }
 
   static Future<void> _upgrade(
@@ -271,14 +301,44 @@ class LocalDatabase {
           'attempts INTEGER NOT NULL, '
           'updated_at TEXT, '
           'next_attempt TEXT NOT NULL)');
-      try {
-        await db.execute(
-            'CREATE UNIQUE INDEX IF NOT EXISTS uq_students_teacher_code '
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_records_session '
+        'ON attendance_records(session_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_records_student '
+        'ON attendance_records(student_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_enroll_student '
+        'ON enrollments(student_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_grades_student '
+        'ON grades(student_id)');
+
+      
+        try {
+
+          await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_students_teacher_code '
             'ON students(teacher_id, student_code) '
             'WHERE student_code IS NOT NULL AND deleted_at IS NULL');
-      } catch (e) {
-        debugPrint('Could not create unique index on student_code: $e');
-      }
+
+        } catch (e) {
+
+          debugPrint('uq_students_teacher_code migration skipped: $e');
+
+          try {
+
+            await db.insert('sync_meta', {
+
+              'key': 'migration_warn_uq_students_code',
+
+              'value': e.toString(),
+
+            }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+          } catch (_) {}
+
+        }
+      
     }
   }
 
@@ -309,6 +369,11 @@ class LocalDatabase {
         }
       }
       m[e.key] = v;
+    }
+    // fail-fast: صف تالف يكسر النموذج بصمت بدونه
+    final id = m['id'];
+    if (id == null || (id is String && id.isEmpty)) {
+      throw StateError('صف تالف في "$table": id مفقود أو فارغ');
     }
     return m;
   }

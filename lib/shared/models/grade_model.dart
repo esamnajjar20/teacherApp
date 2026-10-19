@@ -1,3 +1,4 @@
+import '../../core/utils/safe_parse.dart';
 import 'package:equatable/equatable.dart';
 
 class AssessmentModel extends Equatable {
@@ -29,19 +30,17 @@ class AssessmentModel extends Equatable {
 
   factory AssessmentModel.fromJson(Map<String, dynamic> json) {
     return AssessmentModel(
-      id: json['id'] as String,
-      classId: json['class_id'] as String,
-      name: json['name'] as String,
-      type: json['type'] as String?,
-      weight: (json['weight'] as num).toDouble(),
-      maxScore: (json['max_score'] as num).toDouble(),
-      date: json['date'] != null ? DateTime.parse(json['date'] as String) : null,
-      isActive: json['is_active'] as bool? ?? true,
-      deletedAt: json['deleted_at'] != null
-          ? DateTime.parse(json['deleted_at'] as String)
-          : null,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      id: SafeParse.string(json['id']),
+      classId: SafeParse.string(json['class_id']),
+      name: SafeParse.string(json['name']),
+      type: SafeParse.stringOrNull(json['type']),
+      weight: SafeParse.doubleOr(json['weight'], 0.0),
+      maxScore: SafeParse.doubleOr(json['max_score'], 100.0),
+      date: SafeParse.dateTime(json['date']),
+      isActive: SafeParse.boolOr(json['is_active'], true),
+      deletedAt: SafeParse.dateTime(json['deleted_at']),
+      createdAt: SafeParse.dateTimeOrNow(json['created_at']),
+      updatedAt: SafeParse.dateTimeOrNow(json['updated_at']),
     );
   }
 
@@ -96,18 +95,14 @@ class GradeModel extends Equatable {
 
   factory GradeModel.fromJson(Map<String, dynamic> json) {
     return GradeModel(
-      id: json['id'] as String,
-      assessmentId: json['assessment_id'] as String,
-      studentId: json['student_id'] as String,
-      rawScore: json['raw_score'] != null
-          ? (json['raw_score'] as num).toDouble()
-          : null,
-      notes: json['notes'] as String?,
-      deletedAt: json['deleted_at'] != null
-          ? DateTime.parse(json['deleted_at'] as String)
-          : null,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      id: SafeParse.string(json['id']),
+      assessmentId: SafeParse.string(json['assessment_id']),
+      studentId: SafeParse.string(json['student_id']),
+      rawScore: SafeParse.doubleOrNull(json['raw_score']),
+      notes: SafeParse.stringOrNull(json['notes']),
+      deletedAt: SafeParse.dateTime(json['deleted_at']),
+      createdAt: SafeParse.dateTimeOrNow(json['created_at']),
+      updatedAt: SafeParse.dateTimeOrNow(json['updated_at']),
     );
   }
 
@@ -151,15 +146,17 @@ class GradeSettingsModel extends Equatable {
 
   factory GradeSettingsModel.fromJson(Map<String, dynamic> json) {
     return GradeSettingsModel(
-      id: json['id'] as String,
-      classId: json['class_id'] as String,
+      id: SafeParse.string(json['id']),
+      classId: SafeParse.string(json['class_id']),
       gradingScale: (json['grading_scale'] as List<dynamic>?)
-              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              ?.whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
               .toList() ??
           [],
-      missingGradePolicy: json['missing_grade_policy'] as String? ?? 'exclude',
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      missingGradePolicy:
+          SafeParse.string(json['missing_grade_policy'], 'exclude'),
+      createdAt: SafeParse.dateTimeOrNow(json['created_at']),
+      updatedAt: SafeParse.dateTimeOrNow(json['updated_at']),
     );
   }
 

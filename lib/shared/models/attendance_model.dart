@@ -1,3 +1,4 @@
+import '../../core/utils/safe_parse.dart';
 import 'package:equatable/equatable.dart';
 import '../../core/constants/app_constants.dart';
 
@@ -24,16 +25,14 @@ class AttendanceSessionModel extends Equatable {
 
   factory AttendanceSessionModel.fromJson(Map<String, dynamic> json) {
     return AttendanceSessionModel(
-      id: json['id'] as String,
-      classId: json['class_id'] as String,
-      date: DateTime.parse(json['date'] as String),
-      period: json['period'] as String?,
-      notes: json['notes'] as String?,
-      deletedAt: json['deleted_at'] != null
-          ? DateTime.parse(json['deleted_at'] as String)
-          : null,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      id: SafeParse.string(json['id']),
+      classId: SafeParse.string(json['class_id']),
+      date: SafeParse.dateTimeOrNow(json['date']),
+      period: SafeParse.stringOrNull(json['period']),
+      notes: SafeParse.stringOrNull(json['notes']),
+      deletedAt: SafeParse.dateTime(json['deleted_at']),
+      createdAt: SafeParse.dateTimeOrNow(json['created_at']),
+      updatedAt: SafeParse.dateTimeOrNow(json['updated_at']),
     );
   }
 
@@ -68,16 +67,14 @@ class AttendanceRecordModel extends Equatable {
 
   factory AttendanceRecordModel.fromJson(Map<String, dynamic> json) {
     return AttendanceRecordModel(
-      id: json['id'] as String,
-      sessionId: json['session_id'] as String,
-      studentId: json['student_id'] as String,
-      status: json['status'] as String,
-      notes: json['notes'] as String?,
-      deletedAt: json['deleted_at'] != null
-          ? DateTime.parse(json['deleted_at'] as String)
-          : null,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      updatedAt: DateTime.parse(json['updated_at'] as String),
+      id: SafeParse.string(json['id']),
+      sessionId: SafeParse.string(json['session_id']),
+      studentId: SafeParse.string(json['student_id']),
+      status: SafeParse.string(json['status'], 'present'),
+      notes: SafeParse.stringOrNull(json['notes']),
+      deletedAt: SafeParse.dateTime(json['deleted_at']),
+      createdAt: SafeParse.dateTimeOrNow(json['created_at']),
+      updatedAt: SafeParse.dateTimeOrNow(json['updated_at']),
     );
   }
 
